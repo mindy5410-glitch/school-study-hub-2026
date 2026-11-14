@@ -1,0 +1,12 @@
+/node_modules/
+/dist/
+/.firebase/
+/.sites-runtime/
+/private-data/
+/work/
+.env*
+!.env.example
+*-debug.log*
+*service-account*.json
+*credentials*.json
+*.tsbuildinfo

@@ -1,0 +1,123 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+import ts from 'typescript';
+import {initializeTestEnvironment,assertFails,assertSucceeds} from '@firebase/rules-unit-testing';
+import {doc,collection,getDoc,getDocFromServer,getDocs,writeBatch,setDoc,deleteDoc,serverTimestamp,setLogLevel} from 'firebase/firestore';
+import {makeFixture} from './synthetic-fixture.mjs';
+
+// Run ONLY against the local demo project. No production project or roster read.
+const projectId=`demo-school-hub-${Date.now()}`;
+const out=path.resolve('.sites-runtime/test-compiled/lib');
+await fs.mkdir(out,{recursive:true});
+for(const name of ['domain','mutations','initial-data-digest','cloud-model','firebase-runtime','shared-client','teacher-access']){
+  const source=await fs.readFile(`lib/${name}.ts`,'utf8');
+  let compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace(/from '(\.\/[^']+)'/g,"from '$1.mjs'");
+  await fs.writeFile(path.join(out,name+'.mjs'),compiled);
+}
+const load=name=>import(pathToFileURL(path.join(out,name+'.mjs')).href);
+const domain=await load('domain'),{buildCloudConfig,cloudSchedule}=await load('cloud-model'),{createSharedClient}=await load('shared-client');
+const {watchTeacherAccess}=await load('teacher-access');
+globalThis.window={dispatchEvent(){}};
+setLogLevel('silent');
+const rules=(await fs.readFile('rules/school.rules.template','utf8')).replaceAll('__OWNER_UID__','owner-test');
+const env=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:8180,rules}});
+const token=email=>({email,email_verified:true,firebase:{sign_in_provider:'google.com'}});
+const owner=env.authenticatedContext('owner-test',token('owner@example.test')).firestore();
+const teacher=env.authenticatedContext('teacher-test',token('teacher@example.test')).firestore();
+const clients=[];let checks=0,stopAccess=()=>{};
+async function ok(label,fn){await fn();checks++;console.log('PASS '+label);}
+const state=makeFixture(domain);
+async function read(db,p){return (await getDoc(doc(db,p))).data();}
+async function rawAttendance(overrides={},options={}){
+  const h=await read(owner,'school/live'),at=serverTimestamp(),logRef=doc(collection(owner,'history'));
+  const d={studentId:'1-1',date:'2026-11-30',period:2,room:1,status:'present',note:'',updatedAt:at,updatedBy:'owner-test',actorName:'관리자',revision:h.revision+1,...overrides};
+  const log={revision:d.revision,kind:'attendance',date:d.date,room:d.room,period:d.period,firstStudentId:d.studentId,actorUid:'owner-test',actorName:'관리자',createdAt:at,...options.log};
+  const batch=writeBatch(owner);batch.set(doc(owner,'attendance',`${d.date}|${d.studentId}|${d.period}`),d);batch.set(logRef,log);batch.update(doc(owner,'school/live'),{revision:h.revision+1,updatedAt:at,updatedBy:'owner-test',lastLog:logRef.id});return batch.commit();
+}
+async function rawSchedule(id,to,extra={}){
+  const h=await read(owner,'school/live'),s=await read(owner,'school/schedule'),at=serverTimestamp(),logRef=doc(collection(owner,'history'));
+  const from=s.assignments[id],slot=state.assignments.find(a=>a.id===id),counts={...s.counts,[from]:s.counts[from]-1,[to]:s.counts[to]+1};
+  const batch=writeBatch(owner);batch.set(doc(owner,'school/schedule'),{...s,assignments:{...s.assignments,[id]:to},counts,revision:h.revision+1,updatedAt:at,updatedBy:'owner-test',...extra});
+  batch.set(logRef,{revision:h.revision+1,kind:'schedule',date:slot.date,room:slot.room,period:slot.period,assignmentId:id,fromTeacher:from,toTeacher:to,swapId:'',reason:'가상 검증',actorUid:'owner-test',actorName:'관리자',createdAt:at});
+  batch.update(doc(owner,'school/live'),{revision:h.revision+1,updatedAt:at,updatedBy:'owner-test',lastLog:logRef.id});return batch.commit();
+}
+async function snapshot(c){const r=await c.request('/api/state');assert.equal(r.status,200,await r.clone().text());return r.json();}
+async function waitRevision(c,revision){const until=Date.now()+12000;while(Date.now()<until){if(c.snapshot()?.revision>=revision)return c.snapshot();await new Promise(r=>setTimeout(r,25));}throw new Error('Second client did not receive committed revision');}
+const post=(c,body)=>c.request('/api/mutate',{method:'POST',body:JSON.stringify(body)});
+try{
+  await ok('owner bootstrap uses real rules',async()=>{
+    const at=serverTimestamp(),batch=writeBatch(owner);
+    batch.set(doc(owner,'school/config'),buildCloudConfig(state,'owner-test',at));
+    batch.set(doc(owner,'school/schedule'),cloudSchedule(state,'owner-test',at));
+    batch.set(doc(owner,'school/live'),{revision:0,updatedAt:at,updatedBy:'owner-test',lastLog:''});
+    await assertSucceeds(batch.commit());
+  });
+  await ok('anonymous, unregistered, unverified and wrong provider denied',async()=>{
+    const contexts=[env.unauthenticatedContext(),env.authenticatedContext('stranger',token('stranger@example.test')),env.authenticatedContext('unverified',{...token('teacher@example.test'),email_verified:false}),env.authenticatedContext('wrong',{...token('teacher@example.test'),firebase:{sign_in_provider:'password'}})];
+    for(const c of contexts){const db=c.firestore();await assertFails(getDoc(doc(db,'school/config')));await assertFails(getDocs(collection(db,'attendance')));}
+  });
+  await ok('owner registers canonical teacher grant; teacher cannot grant access',async()=>{
+    const grant={teacherId:'teacher05',displayName:'예시교사5',enabled:true,updatedAt:serverTimestamp(),updatedBy:'owner-test'};
+    await assertSucceeds(setDoc(doc(owner,'access/teacher@example.test'),grant));
+    await assertSucceeds(getDoc(doc(teacher,'school/config')));
+    await assertSucceeds(getDoc(doc(teacher,'access/teacher@example.test')));
+    await assertFails(getDocs(collection(teacher,'access')));
+    await assertFails(getDoc(doc(teacher,'access/owner@example.test')));
+    await assertFails(setDoc(doc(teacher,'access/stranger@example.test'),{...grant,updatedBy:'teacher-test'}));
+    await assertFails(setDoc(doc(owner,'access/forged@example.test'),{...grant,isAdmin:true}));
+  });
+  const ownUser={uid:'owner-test',email:'owner@example.test'},teacherUser={uid:'teacher-test',email:'teacher@example.test'};
+  const first=createSharedClient(owner,{currentUser:ownUser},ownUser,'관리자',true,()=>{}),second=createSharedClient(teacher,{currentUser:teacherUser},teacherUser,'예시교사5',false,()=>{});clients.push(first,second);
+  // Match App's access watcher: removing a grant disposes the shared client.
+  stopAccess=watchTeacherAccess(teacher,teacherUser,'owner-test',grant=>{if(!grant)second.dispose();},()=>second.dispose());
+  await ok('both actual shared clients initialize from server',async()=>{assert.equal((await snapshot(first)).revision,0);assert.equal((await snapshot(second)).revision,0);});
+  await ok('attendance edit broadcasts and reversible clear uses tombstone',async()=>{
+    let s=await snapshot(first);let r=await post(first,{kind:'attendance',date:'2026-11-30',room:1,period:1,changes:[{studentId:'1-1',status:'present',note:'가상 확인'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());
+    s=await r.json();await waitRevision(second,s.revision);assert.equal(second.snapshot().state.attendance['2026-11-30|1-1|1'].status,'present');
+    r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:1,changes:[{studentId:'1-1',status:'late',note:'가상 수정'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    r=await post(first,{kind:'attendance',date:'2026-11-30',room:1,period:1,changes:[{studentId:'1-1',status:null,note:''}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(second,s.revision);assert.equal(second.snapshot().state.attendance['2026-11-30|1-1|1'],undefined);assert.equal((await read(owner,'attendance/2026-11-30|1-1|1')).status,'unrecorded');
+  });
+  await ok('whole class of 28 attendance records saves atomically',async()=>{
+    const s=await snapshot(second),changes=s.state.participants.filter(p=>p.date==='2026-11-30'&&p.room===1).map(p=>({studentId:p.studentId,status:'present',note:''}));assert.equal(changes.length,28);
+    const r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:3,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());await waitRevision(first,(await r.json()).revision);assert.equal(Object.values(first.snapshot().state.attendance).filter(a=>a.period===3).length,28);
+  });
+  await ok('simultaneous saves keep one commit and return 409 to the other',async()=>{
+    const s=await snapshot(first);await waitRevision(second,s.revision);const body={kind:'attendance',date:'2026-11-30',room:1,period:2,changes:[{studentId:'3-1',status:'present',note:''}],baseRevision:s.revision};
+    const results=await Promise.all([post(first,body),post(second,{...body,changes:[{studentId:'1-1',status:'late',note:''}]})]);assert.deepEqual(results.map(r=>r.status).sort(),[200,409],JSON.stringify(await Promise.all(results.map(async r=>({status:r.status,error:(await r.clone().json()).error})))));await waitRevision(first,s.revision+1);await waitRevision(second,s.revision+1);assert.equal(first.snapshot().revision,s.revision+1);
+  });
+  await ok('valid timetable swap commits without changing teacher load',async()=>{
+    const s=await snapshot(first);let choice;
+    for(const a of s.state.assignments){for(const b of s.state.assignments){if(a.id===b.id||a.teacherId===b.teacherId)continue;const next=s.state.assignments.map(x=>x.id===a.id?{...x,teacherId:b.teacherId}:x.id===b.id?{...x,teacherId:a.teacherId}:x);if(!domain.scheduleErrors(s.state,next).length){choice={a,b};break;}}if(choice)break;}
+    assert.ok(choice);const r=await post(first,{kind:'schedule',assignmentId:choice.a.id,teacherId:choice.b.teacherId,swapId:choice.b.id,reason:'가상 맞교환',baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());const n=await r.json();await waitRevision(second,n.revision);assert.equal(second.snapshot().state.assignments.find(a=>a.id===choice.a.id).teacherId,choice.b.teacherId);
+  });
+  await ok('valid single timetable change commits with correct counts',async()=>{
+    const s=await snapshot(first);let choice;
+    for(const a of s.state.assignments){for(const t of s.state.teachers){if(a.teacherId===t.id||!a.teacherId.match(/teacher(0[5-9]|1[0-3])/))continue;const next=s.state.assignments.map(x=>x.id===a.id?{...x,teacherId:t.id}:x);if(!domain.scheduleErrors(s.state,next).length){choice={a,t};break;}}if(choice)break;}
+    assert.ok(choice);const r=await post(first,{kind:'schedule',assignmentId:choice.a.id,teacherId:choice.t.id,reason:'가상 변경',baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());await waitRevision(second,(await r.json()).revision);
+  });
+  await ok('server rejects lesson overlap, simultaneous duty and quota overflow',async()=>{
+    const s=await read(owner,'school/schedule');
+    const blockedSlot=state.assignments.find(a=>state.days.find(d=>d.date===a.date).weekday==='수'&&a.period===2&&s.assignments[a.id]!=='teacher06');assert.ok(blockedSlot);await assertFails(rawSchedule(blockedSlot.id,'teacher06'));
+    const a=state.assignments.find(x=>x.room===1&&x.date==='2026-11-30'),parallel=state.assignments.find(x=>x.date===a.date&&x.period===a.period&&x.room===2);await assertFails(rawSchedule(a.id,s.assignments[parallel.id]));
+    const slot=state.assignments.find(x=>s.assignments[x.id]!=='teacher01');await assertFails(rawSchedule(slot.id,'teacher01'));
+  });
+  await ok('server rejects excluded day, wrong period, pupil, field, note and identity',async()=>{
+    for(const patch of [{date:'2026-12-11'},{period:7},{studentId:'2-1'},{note:'x'.repeat(301)},{status:'forged'},{isAdmin:true},{updatedBy:'teacher-test'},{actorName:'다른 교사'},{revision:999}])await assertFails(rawAttendance(patch));
+    await assertFails(rawAttendance({},{log:{firstStudentId:'13-24'}}));
+  });
+  await ok('master and history immutable; orphan writes and record deletes denied',async()=>{
+    const h=await read(owner,'school/live');await assertFails(setDoc(doc(owner,'school/live'),{...h,revision:h.revision+1,updatedAt:serverTimestamp()}));
+    const logs=await getDocs(collection(owner,'history'));await assertFails(setDoc(logs.docs[0].ref,{forged:true}));
+    await assertFails(deleteDoc(doc(owner,'attendance/2026-11-30|1-1|1')));
+    await assertFails(setDoc(doc(owner,'school/config'),{forged:true}));
+  });
+  await ok('revoked teacher cannot read or write',async()=>{
+    const grant=await read(owner,'access/teacher@example.test');await setDoc(doc(owner,'access/teacher@example.test'),{...grant,enabled:false,updatedAt:serverTimestamp(),updatedBy:'owner-test'});
+    const fresh=env.authenticatedContext('revoked-test',token('teacher@example.test')).firestore();
+    await assertFails(getDocFromServer(doc(fresh,'school/config')));await assertFails(setDoc(doc(teacher,'attendance/forged'),{status:'present'}));
+    const until=Date.now()+5000;while(second.snapshot()&&Date.now()<until)await new Promise(r=>setTimeout(r,25));assert.equal(second.snapshot(),null,'Revoked live listener must discard its cache');
+  });
+  console.log(JSON.stringify({checks,passed:true,fixture:'fully synthetic',projectId,productionWrites:0}));
+}finally{stopAccess();for(const c of clients)c.dispose();await env.cleanup();}

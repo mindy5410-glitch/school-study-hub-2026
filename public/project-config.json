@@ -1,0 +1,14 @@
+{
+  "firebase": {
+    "projectId": "school-study-hub-2026-n4k7",
+    "appId": "1:117719367163:web:c2c61f8c869fa24acadf5e",
+    "storageBucket": "school-study-hub-2026-n4k7.firebasestorage.app",
+    "apiKey": "AIzaSyAAxHgo9GdLvUIitObwsoMOToYA8m4QPoA",
+    "authDomain": "school-study-hub-2026-n4k7.firebaseapp.com",
+    "messagingSenderId": "117719367163",
+    "projectNumber": "117719367163",
+    "version": "2"
+  },
+  "databaseId": "school-hub",
+  "ownerUid": "IGJToICMb2hAVLVSsgjPqUJNVWh2"
+}

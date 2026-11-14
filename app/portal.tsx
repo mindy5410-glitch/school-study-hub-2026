@@ -1,0 +1,97 @@
+'use client';
+import {useCallback,useEffect,useState} from 'react';
+import {Calendar,ClipboardList,School,Settings,History,RefreshCw,Check,AlertCircle,X,ChevronRight,LogOut,Loader2,ArrowLeftRight} from 'lucide-react';
+import type {Assignment,AttendanceChange,Room,Snapshot} from '../lib/types';
+import {getRecord,sameAttendance,teacherLoad} from '../lib/domain';
+import {ScheduleEditor,ScheduleView,type ScheduleMutation} from './components/schedule';
+import {AttendanceView,type Drafts} from './components/attendance';
+import {OriginalView} from './components/original';
+import {Loading,Modal,formatSaved} from './components/ui';
+
+type View='schedule'|'attendance'|'original';
+type Toast={message:string;error?:boolean;action?:{label:string;run:()=>void}};
+class RequestError extends Error {constructor(public status:number,message:string){super(message);}}
+const views=[{id:'schedule' as View,label:'교사 임장',icon:Calendar,title:'교사 임장 시간표',description:'담당 교사를 확인하고, 수업 시간과 겹치지 않게 일정을 조정하세요.'},
+  {id:'attendance' as View,label:'교시별 출석',icon:ClipboardList,title:'교시별 출석 기록',description:'관리반과 교시를 선택해 출석을 기록하고 수정하세요.'},
+  {id:'original' as View,label:'원반별 출석부',icon:School,title:'원반별 출석부',description:'원래 소속 반의 학생들이 어디에서 출석했는지 확인하세요.'}];
+
+export default function Portal({displayName,request,onSignOut,onManage}:{displayName:string;request:(path:string,init?:RequestInit)=>Promise<Response>;onSignOut:()=>void;onManage?:()=>void}){
+  const [snapshot,setSnapshot]=useState<Snapshot|null>(null),[loadError,setLoadError]=useState('');
+  const [view,setView]=useState<View>('schedule'),[date,setDate]=useState('2026-11-30');
+  const [room,setRoom]=useState<Room>(1),[period,setPeriod]=useState(1),[classNo,setClassNo]=useState(1);
+  const [teacher,setTeacher]=useState('all'),[scope,setScope]=useState<'all'|'day'>('all');
+  const [attendanceSearch,setAttendanceSearch]=useState(''),[originalSearch,setOriginalSearch]=useState('');
+  const [drafts,setDrafts]=useState<Drafts>({}),[saving,setSaving]=useState(false),[refreshing,setRefreshing]=useState(false);
+  const [edit,setEdit]=useState<Assignment|null>(null),[rules,setRules]=useState(false),[history,setHistory]=useState(false);
+  const [pendingNav,setPendingNav]=useState<(()=>void)|null>(null),[toast,setToast]=useState<Toast|null>(null);
+  const dirty=Object.keys(drafts).length>0;
+  useEffect(()=>{if(!dirty)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
+  const load=useCallback(async()=>{
+    const response=await request('/api/state',{cache:'no-store'});const json=await response.json()as Snapshot&{error?:string};
+    if(!response.ok)throw new RequestError(response.status,json.error??'자료를 불러오지 못했습니다.');
+    setSnapshot(json);setLoadError('');return json as Snapshot;
+  },[request]);
+  useEffect(()=>{load().catch(e=>setLoadError(e.message));},[load]);
+  useEffect(()=>{
+    if(dirty||edit||saving)return;
+    const update=()=>load().catch(()=>undefined);const timer=setInterval(update,45000);
+    window.addEventListener('focus',update);window.addEventListener('school:updated',update);return()=>{clearInterval(timer);window.removeEventListener('focus',update);window.removeEventListener('school:updated',update);};
+  },[load,dirty,edit,saving]);
+  useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(null),toast.action?12000:7000);return()=>clearTimeout(timer);},[toast]);
+  const guard=(action:()=>void)=>{if(dirty)setPendingNav(()=>action);else action();};
+  const changeDate=(next:string)=>guard(()=>{setDate(next);if(next>'2026-12-01')setRoom(1);setPeriod(p=>Math.min(p,snapshot?.state.days.find(d=>d.date===next)?.periods??6));setAttendanceSearch('');});
+  const refresh=()=>guard(async()=>{setRefreshing(true);try{await load();setToast({message:'최신 내용을 불러왔습니다.'});}catch(e){setToast({message:e instanceof Error?e.message:'자료를 불러오지 못했습니다.',error:true});}finally{setRefreshing(false);}});
+  const mutate=async(payload:Record<string,unknown>)=>{
+    const response=await request('/api/mutate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const json=await response.json()as Snapshot&{error?:string};
+    if(!response.ok){
+      if(response.status===409){await load();setEdit(null);}
+      throw new RequestError(response.status,json.error??'저장하지 못했습니다.');
+    }
+    setSnapshot(json);return json as Snapshot;
+  };
+  const saveSchedule=async(payload:ScheduleMutation)=>{
+    if(!snapshot)return;const original=snapshot.state.assignments.find(a=>a.id===payload.assignmentId)!;setSaving(true);
+    try{
+      const result=await mutate({...payload});setEdit(null);
+      setToast({message:payload.swapId?'임장 일정을 맞교환했습니다.':'담당 교사를 변경했습니다.',action:{label:'되돌리기',run:async()=>{
+        try{await mutate({kind:'schedule',assignmentId:payload.assignmentId,teacherId:original.teacherId,swapId:payload.swapId,reason:'직전 변경 되돌리기',baseRevision:result.revision});setToast({message:'변경을 되돌렸습니다.'});}catch(e){setToast({message:e instanceof Error?e.message:'되돌리지 못했습니다.',error:true});}
+      }}});
+    }catch(e){if(e instanceof RequestError&&e.status===409)setToast({message:e.message,error:true});throw e;}finally{setSaving(false);}
+  };
+  const saveAttendance=async()=>{
+    if(!snapshot)return;const changes:AttendanceChange[]=Object.entries(drafts).filter(([id,v])=>!sameAttendance(getRecord(snapshot.state,id,date,period),v)).map(([studentId,v])=>({studentId,...v}));
+    if(!changes.length)return;const oldChanges=changes.map(c=>{const old=getRecord(snapshot.state,c.studentId,date,period);return {studentId:c.studentId,status:old?.status??null,note:old?.note??''};});
+    const context={date,room,period};setSaving(true);
+    try{
+      const result=await mutate({kind:'attendance',...context,changes,baseRevision:snapshot.revision});setDrafts({});
+      setToast({message:`${changes.length}명의 출석 기록을 저장했습니다.`,action:{label:'되돌리기',run:async()=>{
+        try{await mutate({kind:'attendance',...context,changes:oldChanges,baseRevision:result.revision});setToast({message:'출석 기록을 이전 상태로 되돌렸습니다.'});}catch(e){setToast({message:e instanceof Error?e.message:'되돌리지 못했습니다.',error:true});}
+      }}});
+    }catch(e){setToast({message:e instanceof Error?e.message:'저장하지 못했습니다.',error:true});}finally{setSaving(false);}
+  };
+  const selected=views.find(v=>v.id===view)!;
+  return <div className={`app-shell ${dirty?'has-drafts':''}`}>
+    <aside className="sidebar"><a className="brand" href="#" onClick={e=>{e.preventDefault();guard(()=>setView('schedule'));}} aria-label="체험학습 운영실 첫 화면"><span className="brand-mark"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M7 26V10l9-5 9 5v16M4 26h24M12 14h2m4 0h2m-8 5h2m4 0h2M14 26v-4h4v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg></span><span>체험학습<strong>운영실</strong></span></a>
+      <div className="sidebar-caption">2026학년도 교외체험학습</div>
+      <nav aria-label="운영 메뉴">{views.map(v=><button key={v.id} className={`nav-item ${view===v.id?'active':''}`} onClick={()=>guard(()=>setView(v.id))}><v.icon size={20}/><span>{v.label}</span><ChevronRight size={15}/></button>)}</nav>
+      <div className="sidebar-period"><span>운영 기간</span><strong>11.30 — 12.29</strong><small>12월 11일 제외</small></div>
+      <div className="sidebar-bottom">{onManage&&<button className="nav-item settings-link" onClick={()=>guard(onManage)}><Settings size={18}/><span>교사 계정 관리</span></button>}<button className="nav-item settings-link" onClick={()=>setRules(true)}><Settings size={18}/><span>운영 기준</span></button><div className="profile"><span className="avatar">{displayName.slice(0,1).toUpperCase()}</span><div><strong title={displayName}>{displayName}</strong><small>로그인하여 이용 중</small></div><button className="signout" onClick={()=>guard(onSignOut)} aria-label="로그아웃"><LogOut size={17}/></button></div></div>
+    </aside>
+    <main className="main-content"><div className="account-strip"><strong>{displayName}</strong>{onManage&&<button onClick={()=>guard(onManage)}>교사 계정 관리</button>}<button onClick={()=>guard(onSignOut)}>로그아웃</button></div><header className="page-heading"><div><span className="eyebrow">체험학습 운영</span><h1>{selected.title}</h1><p>{selected.description}</p></div><div className="heading-actions">{snapshot&&<span className="saved-status"><Check size={14}/>저장됨<small>{formatSaved(snapshot.updatedAt)}</small></span>}<button className="icon-button bordered" aria-label="최신 내용 새로고침" disabled={refreshing||saving} onClick={refresh}><RefreshCw size={17} className={refreshing?'spin':''}/></button><button className="button secondary compact" onClick={()=>setHistory(true)}><History size={16}/>변경 내역</button></div></header>
+      <div className="operation-banner"><School size={18}/><span><strong>11/30·12/1 두 반 운영</strong><span className="banner-separator">·</span>12/2부터 기간1반(3반)으로 통합합니다.</span></div>
+      {!snapshot?loadError?<section className="panel error-panel"><AlertCircle size={28}/><h2>운영 자료를 불러오지 못했습니다</h2><p>{loadError}</p><button className="button primary" onClick={()=>{setLoadError('');load().catch(e=>setLoadError(e.message));}}>다시 불러오기</button>{loadError.includes('로그인')&&<a href="/signin-with-chatgpt?return_to=%2F" target="_top">로그인하기</a>}</section>:<Loading/>:<>
+        {view==='schedule'&&<ScheduleView snapshot={snapshot} date={date} onDate={changeDate} teacher={teacher} onTeacher={setTeacher} scope={scope} onScope={setScope} onEdit={setEdit}/>}
+        {view==='attendance'&&<AttendanceView snapshot={snapshot} date={date} room={room} period={period} onDate={changeDate} onRoom={r=>guard(()=>{setRoom(r);setAttendanceSearch('');})} onPeriod={p=>guard(()=>setPeriod(p))} drafts={drafts} onDrafts={setDrafts} onSave={saveAttendance} saving={saving} search={attendanceSearch} onSearch={setAttendanceSearch}/>}
+        {view==='original'&&<OriginalView snapshot={snapshot} date={date} onDate={changeDate} classNo={classNo} onClass={setClassNo} search={originalSearch} onSearch={setOriginalSearch} onOpenRecord={(d,r,p)=>guard(()=>{setDate(d);setRoom(r);setPeriod(p);setAttendanceSearch('');setView('attendance');})}/>}
+      </>}
+      <footer className="main-footer">체험학습 운영실<span>2026년 11월 30일 — 12월 29일</span></footer>
+    </main>
+    <nav className="mobile-nav" aria-label="모바일 운영 메뉴">{views.map(v=><button key={v.id} className={view===v.id?'active':''} onClick={()=>guard(()=>setView(v.id))}><v.icon size={20}/><span>{v.label}</span></button>)}</nav>
+    {edit&&snapshot&&<ScheduleEditor snapshot={snapshot} assignmentId={edit.id} onClose={()=>setEdit(null)} onSave={saveSchedule}/>}
+    {pendingNav&&<Modal title="저장하지 않은 출석 기록이 있습니다" description="현재 교시의 변경 내용을 저장하지 않고 이동할까요?" onClose={()=>setPendingNav(null)}><div className="modal-actions"><button className="button secondary" onClick={()=>setPendingNav(null)}>돌아가기</button><button className="button primary" onClick={()=>{setDrafts({});pendingNav();setPendingNav(null);}}>저장하지 않고 이동</button></div></Modal>}
+    {history&&<Modal title="최근 변경 내역" description="시간표와 출석 기록의 저장 이력을 확인할 수 있습니다." onClose={()=>setHistory(false)} wide><div className="history-list">{!snapshot?.history.length?<div className="empty-history"><History size={25}/><p>아직 저장한 변경이 없습니다.</p></div>:snapshot.history.map(h=><article key={h.id}><span className="history-icon">{h.kind==='schedule'?<Calendar size={17}/>:<ClipboardList size={17}/>}</span><div><strong>{h.summary}</strong><p>{h.actor}<span>·</span>{formatSaved(h.created_at)}</p></div></article>)}</div></Modal>}
+    {rules&&snapshot&&<Modal title="운영 기준" description="현재 시간표와 출석 계획에 적용된 기준입니다." onClose={()=>setRules(false)} wide><div className="rules-grid"><section><h3>관리반과 교시</h3><p>11/30·12/1: 기간1반(3반), 기간2반(4반)</p><p>12/2부터: 기간1반(3반) 통합</p><p>월·수·목 6교시 / 화·금 7교시</p><p>14:00은 5교시 시작 시각</p><p>주말·12월 11일·12월 25일 제외</p></section><section><h3>임장 배정</h3><p>{snapshot.state.teachers.filter(t=>t.minDuties===2).map(t=>t.name).join('·')}: 전체 기간 각 2~3교시</p><p>{snapshot.state.teachers.filter(t=>t.minDuties===5).map(t=>t.name).join('·')}: 전체 기간 각 5~6교시</p><p>그 외 {snapshot.state.teachers.filter(t=>t.minDuties===0).length}명: 기준 배정 각 8교시</p><p>{snapshot.state.settings.excludedTeachers.join('·')} 선생님은 배정 대상에서 제외</p></section></div><section className="rule-lessons"><h3>1·2학년 수업 제외 시간</h3>{snapshot.state.teachers.filter(t=>snapshot.state.blocked.some(b=>b.teacherId===t.id)).map(t=><div key={t.id}><strong>{t.name}</strong><span>{snapshot.state.blocked.filter(b=>b.teacherId===t.id).map(b=>`${b.weekday} ${b.period}교시`).join(' · ')}</span></div>)}<p className="subtle">제공 시간표를 전체 기간에 요일별로 동일 적용합니다. 수요일 5·6교시에는 1·2학년 수업이 없습니다.</p></section></Modal>}
+    {toast&&<div className={`toast ${toast.error?'error':''}`} role="status">{toast.error?<AlertCircle size={18}/>:<Check size={18}/>}<span>{toast.message}</span>{toast.action&&<button onClick={toast.action.run}>{toast.action.label}</button>}<button className="toast-close" onClick={()=>setToast(null)} aria-label="알림 닫기"><X size={16}/></button></div>}
+  </div>;
+}

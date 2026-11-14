@@ -1,0 +1,193 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Dedicated single-school database. No anonymous data access.
+    // school/config: immutable bounded master JSON + immutable lookup maps,
+    //   created once by the pinned owner after validating the initial-data digest.
+    // school/live: revision (int), updatedAt (timestamp), updatedBy (uid), lastLog.
+    // school/schedule: slot->teacher and teacher->count maps, revision, edit stamp.
+    // attendance/{date|studentId|period}: one typed record per student/period.
+    //   'unrecorded' is a reversible tombstone; client deletion is forbidden.
+    // history/{autoId}: immutable structured event committed with the live head.
+    // access/{lowercaseEmail}: teacherId, canonical displayName, enabled, edit stamp.
+    //   Only the owner and that account can read an email grant; only owner edits.
+    // Shared school records are intentionally readable by explicitly registered
+    // teachers, as required for the two management classes and original rosters.
+
+    function signed() {
+      return request.auth != null && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+    function ownerId() { return request.auth.uid == 'IGJToICMb2hAVLVSsgjPqUJNVWh2'; }
+    function isOwner() { return signed() && ownerId(); }
+    function ownEmail() { return request.auth.token.email.lower(); }
+    function grant() { return get(/databases/$(database)/documents/access/$(ownEmail())).data; }
+    function member() { return signed() && (ownerId() || grant().enabled == true); }
+    function config() { return get(/databases/$(database)/documents/school/config).data; }
+    function configAfter() { return getAfter(/databases/$(database)/documents/school/config).data; }
+    function head() { return get(/databases/$(database)/documents/school/live).data; }
+    function nextHead() { return getAfter(/databases/$(database)/documents/school/live).data; }
+    function nextLog() { return getAfter(/databases/$(database)/documents/history/$(nextHead().lastLog)).data; }
+    function fields(d, keys) { return d is map && d.keys().hasOnly(keys) && d.keys().hasAll(keys); }
+    function text(s, min, max) { return s is string && s.size() >= min && s.size() <= max; }
+    function stamp(time, uid) { return time is timestamp && time == request.time && text(uid,1,128) && uid == request.auth.uid; }
+    function actor(name) { return text(name, 1, 80) && ((ownerId() && name == '관리자') || name == grant().displayName); }
+    function sameKeys(a,b) { return a is map && b is map && a.size() == b.size() && a.keys().hasOnly(b.keys()); }
+    function inBatch(revision) {
+      return revision is int && revision == head().revision + 1
+        && nextHead().revision == revision;
+    }
+    function validPeriod(date,room,period) {
+      return text(date,10,10) && room is int && room in [1,2] && period is int
+        && period >= 1 && period <= config().days.get(date,0)
+        && config().groups.get(date+'-'+string(room),{}).size() > 0;
+    }
+    function validInitialConfig(d) {
+      return fields(d,['schemaVersion','master','slotCount','teacherCount','allowed','parallels','slots','limits','teacherNames','groups','days','createdAt','createdBy'])
+        && d.schemaVersion == 1 && text(d.master,1,400000)
+        && d.slotCount == 89 && d.teacherCount == 13
+        && d.allowed is map && d.allowed.size() == 89
+        && d.parallels is map && d.parallels.size() == 89
+        && d.slots is map && d.slots.size() == 89
+        && d.limits is map && d.limits.size() == 13
+        && d.teacherNames is map && d.teacherNames.size() == 13
+        && d.groups is map && d.groups.size() <= 22
+        && d.days is map && d.days.size() == 20 && stamp(d.createdAt,d.createdBy);
+    }
+    function validHeadCreate(d) {
+      return fields(d,['revision','updatedAt','updatedBy','lastLog'])
+        && d.revision == 0 && d.lastLog == '' && stamp(d.updatedAt,d.updatedBy)
+        && !exists(/databases/$(database)/documents/school/config)
+        && configAfter().createdBy == request.auth.uid;
+    }
+    function validHeadUpdate(d) {
+      let log=getAfter(/databases/$(database)/documents/history/$(d.lastLog)).data;
+      return fields(d,['revision','updatedAt','updatedBy','lastLog'])
+        && d.revision is int && d.revision == resource.data.revision+1 && d.revision <= 100000
+        && stamp(d.updatedAt,d.updatedBy) && text(d.lastLog,20,20) && d.lastLog.matches('^[A-Za-z0-9]{20}$')
+        && log.revision == d.revision && log.actorUid == request.auth.uid && log.createdAt == request.time;
+    }
+    function validScheduleShape(d) {
+      return fields(d,['assignments','counts','revision','updatedAt','updatedBy'])
+        && d.assignments is map && d.assignments.size() == 89
+        && d.counts is map && d.counts.size() == 13
+        && d.revision is int && d.revision >= 0 && d.revision <= 100000
+        && stamp(d.updatedAt,d.updatedBy);
+    }
+    function validSlot(id, assignments) {
+      let teacher=assignments.get(id,'');
+      let parallel=config().parallels.get(id,'');
+      return text(id,1,40) && text(teacher,1,80)
+        && config().allowed.get(id,{}).get(teacher,false) == true
+        && (parallel == '' || assignments.get(parallel,'') != teacher);
+    }
+    function boundedCount(teacher,counts) {
+      return counts[teacher] is int && counts[teacher] >= config().limits[teacher].min
+        && counts[teacher] <= config().limits[teacher].max;
+    }
+    function oneChange(d,o,log) {
+      let id=log.assignmentId;
+      let from=o.assignments[id];
+      let to=d.assignments[id];
+      return log.swapId == '' && d.assignments.diff(o.assignments).affectedKeys().size() == 1
+        && d.assignments.diff(o.assignments).affectedKeys().hasOnly([id])
+        && from != to && log.fromTeacher == from && log.toTeacher == to && validSlot(id,d.assignments)
+        && d.counts.diff(o.counts).affectedKeys().hasOnly([from,to])
+        && d.counts[from] == o.counts[from]-1 && d.counts[to] == o.counts[to]+1
+        && boundedCount(from,d.counts) && boundedCount(to,d.counts);
+    }
+    function swapped(d,o,log) {
+      let first=log.assignmentId;
+      let second=log.swapId;
+      return first != second && text(second,1,40)
+        && d.assignments.diff(o.assignments).affectedKeys().size() == 2
+        && d.assignments.diff(o.assignments).affectedKeys().hasOnly([first,second])
+        && d.assignments[first] == o.assignments[second] && d.assignments[second] == o.assignments[first]
+        && log.fromTeacher == o.assignments[first] && log.toTeacher == d.assignments[first]
+        && d.counts == o.counts && validSlot(first,d.assignments) && validSlot(second,d.assignments);
+    }
+    function validScheduleUpdate(d) {
+      let log=nextLog();
+      return validScheduleShape(d) && inBatch(d.revision) && log.kind == 'schedule'
+        && sameKeys(d.assignments,resource.data.assignments) && sameKeys(d.counts,resource.data.counts)
+        && (oneChange(d,resource.data,log) || swapped(d,resource.data,log));
+    }
+    function validAttendance(d,id) {
+      let log=nextLog();
+      return fields(d,['studentId','date','period','room','status','note','updatedAt','updatedBy','actorName','revision'])
+        && text(d.studentId,1,10) && validPeriod(d.date,d.room,d.period)
+        && id == d.date+'|'+d.studentId+'|'+string(d.period)
+        && config().groups.get(d.date+'-'+string(d.room),{}).get(d.studentId,false) == true
+        && d.status is string && d.status in ['present','late','early','absent','experience','unrecorded']
+        && text(d.note,0,300) && (d.status != 'unrecorded' || d.note == '')
+        && stamp(d.updatedAt,d.updatedBy) && actor(d.actorName) && inBatch(d.revision)
+        && log.kind == 'attendance' && log.date == d.date && log.room == d.room && log.period == d.period;
+    }
+    function validLogBase(d) {
+      return inBatch(d.revision) && text(d.actorUid,1,128) && d.actorUid == request.auth.uid && actor(d.actorName)
+        && d.createdAt == request.time && validPeriod(d.date,d.room,d.period);
+    }
+    function validScheduleLog(d) {
+      let slot=config().slots.get(d.assignmentId,{});
+      let schedule=getAfter(/databases/$(database)/documents/school/schedule).data;
+      return fields(d,['revision','kind','date','room','period','assignmentId','fromTeacher','toTeacher','swapId','reason','actorUid','actorName','createdAt'])
+        && d.kind == 'schedule' && validLogBase(d) && text(d.assignmentId,1,40)
+        && text(d.fromTeacher,1,80) && text(d.toTeacher,1,80) && text(d.swapId,0,40) && text(d.reason,0,300)
+        && d.date == slot.date && d.room == slot.room && d.period == slot.period
+        && schedule.revision == d.revision && stamp(schedule.updatedAt,schedule.updatedBy)
+        && schedule.assignments[d.assignmentId] == d.toTeacher;
+    }
+    function validAttendanceLog(d) {
+      let recordId=d.date+'|'+d.firstStudentId+'|'+string(d.period);
+      let record=getAfter(/databases/$(database)/documents/attendance/$(recordId)).data;
+      return fields(d,['revision','kind','date','room','period','firstStudentId','actorUid','actorName','createdAt'])
+        && d.kind == 'attendance' && validLogBase(d) && text(d.firstStudentId,1,10)
+        && record.revision == d.revision && record.updatedBy == request.auth.uid && record.updatedAt == request.time;
+    }
+    function validGrant(d,email) {
+      return fields(d,['teacherId','displayName','enabled','updatedAt','updatedBy'])
+        && text(email,3,254) && email == email.lower() && email.matches('^[a-z0-9._%+-]+@[a-z0-9.-]+[.][a-z]{2,63}$')
+        && text(d.teacherId,1,80) && text(d.displayName,1,80)
+        && d.displayName == config().teacherNames.get(d.teacherId,'')
+        && d.enabled is bool && stamp(d.updatedAt,d.updatedBy);
+    }
+    match /school/config {
+      allow read: if member();
+      allow create: if isOwner() && validInitialConfig(request.resource.data);
+      allow update,delete: if false;
+    }
+    match /school/live {
+      allow read: if member();
+      allow create: if isOwner() && validHeadCreate(request.resource.data);
+      allow update: if member() && validHeadUpdate(request.resource.data);
+      allow delete: if false;
+    }
+    match /school/schedule {
+      allow read: if member();
+      allow create: if isOwner() && !exists(/databases/$(database)/documents/school/config)
+        && validScheduleShape(request.resource.data) && request.resource.data.revision == 0
+        && configAfter().createdBy == request.auth.uid;
+      allow update: if member() && validScheduleUpdate(request.resource.data);
+      allow delete: if false;
+    }
+    match /attendance/{id} {
+      allow read: if member();
+      allow create,update: if member() && validAttendance(request.resource.data,id);
+      allow delete: if false;
+    }
+    match /history/{id} {
+      allow read: if member();
+      allow create: if member() && id == nextHead().lastLog
+        && ((request.resource.data.kind == 'schedule' && validScheduleLog(request.resource.data))
+          || (request.resource.data.kind == 'attendance' && validAttendanceLog(request.resource.data)));
+      allow update,delete: if false;
+    }
+    match /access/{email} {
+      allow get: if isOwner() || (signed() && ownEmail() == email);
+      allow list: if isOwner();
+      allow create,update: if isOwner() && validGrant(request.resource.data,email);
+      allow delete: if false;
+    }
+    match /{document=**} { allow read,write: if false; }
+  }
+}
