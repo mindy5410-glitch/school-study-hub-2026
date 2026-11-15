@@ -30,9 +30,6 @@ export function DatePicker({days,date,onChange}:{days:SchoolDay[];date:string;on
     <Calendar size={16} aria-hidden="true"/><select aria-label="운영 날짜" value={date} onChange={e=>onChange(e.target.value)}>{days.map(d=><option key={d.date} value={d.date}>{schoolDate(d.date,true)} ({d.weekday})</option>)}</select>
     <button className="icon-button" aria-label="다음 운영일" disabled={i>=days.length-1} onClick={()=>onChange(days[i+1].date)}><ChevronRight size={17}/></button></div>;
 }
-export function StatCard({label,value,unit,sub,icon}:{label:string;value:string|number;unit?:string;sub?:string;icon:ReactNode}){
-  return <div className="stat-card"><div className="stat-label">{label}<span className="stat-icon">{icon}</span></div><div className="stat-value">{value}<span>{unit}</span></div>{sub&&<div className="stat-sub">{sub}</div>}</div>;
-}
 export function StatusBadge({status,planned=false}:{status:AttendanceStatus|null;planned?:boolean}){
   if(!status)return <span className="status-badge unrecorded">미기록</span>;
   return <span className={`status-badge ${planned?'planned':STATUS[status].tone}`}>{STATUS[status].label}{planned?' 예정':''}</span>;
