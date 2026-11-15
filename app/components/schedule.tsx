@@ -1,14 +1,13 @@
 'use client';
 import {useMemo,useState} from 'react';
-import {Users,Calendar,ShieldCheck,Pencil,Download,ArrowLeftRight,AlertCircle,Loader2} from 'lucide-react';
+import {Pencil,Download,ArrowLeftRight,AlertCircle,Loader2} from 'lucide-react';
 import type {Assignment,Room,Snapshot} from '../../lib/types';
 import {changedSchedule,expectedCount,roomLabel,scheduleErrors,schoolDate,teacherLoad} from '../../lib/domain';
-import {DatePicker,EmptyState,Modal,StatCard,downloadCSV} from './ui';
+import {DatePicker,EmptyState,Modal,downloadCSV} from './ui';
 
 export interface ScheduleMutation {kind:'schedule';assignmentId:string;teacherId:string;swapId?:string;reason:string;baseRevision:number}
 export function ScheduleView({snapshot,date,onDate,teacher,onTeacher,scope,onScope,onEdit}:{snapshot:Snapshot;date:string;onDate:(date:string)=>void;teacher:string;onTeacher:(id:string)=>void;scope:'all'|'day';onScope:(s:'all'|'day')=>void;onEdit:(a:Assignment)=>void}){
   const {state}=snapshot;const [showEmpty,setShowEmpty]=useState(false);
-  const errors=useMemo(()=>scheduleErrors(state,state.assignments),[state]);
   const rows=state.days.flatMap(day=>(day.date<='2026-12-01'?[1,2]:[1]).map(room=>({day,room:room as Room})))
     .filter(({day,room})=>(scope==='all'||day.date===date)&&(showEmpty||expectedCount(state,day.date,room,1)>0))
     .filter(({day,room})=>teacher==='all'||state.assignments.some(a=>a.date===day.date&&a.room===room&&a.teacherId===teacher));
@@ -17,7 +16,6 @@ export function ScheduleView({snapshot,date,onDate,teacher,onTeacher,scope,onSco
     ...rows.map(({day,room})=>[day.date,day.weekday,roomLabel(room),...Array.from({length:7},(_,i)=>i+1>day.periods?'수업 없음':state.assignments.find(a=>a.date===day.date&&a.room===room&&a.period===i+1)?.teacherId??'학생 없음')]),
   ]);
   return <>
-    <div className="stats-grid"><StatCard label="임장 교사" value={state.teachers.length} unit="명" sub="최신 배정 기준 적용" icon={<Users size={19}/>}/><StatCard label="전체 임장 배정" value={state.assignments.length} unit="교시" sub="기간1반 76교시 · 기간2반 13교시" icon={<Calendar size={19}/>}/><StatCard label="배정 확인" value={errors.length} unit="건" sub={errors.length?'배정 내용을 확인해 주세요':'1·2학년 수업·동시 임장 중복 없음'} icon={<ShieldCheck size={19}/>}/></div>
     <section className="panel"><div className="panel-toolbar"><div className="segmented"><button className={scope==='all'?'selected':''} onClick={()=>onScope('all')}>전체 기간</button><button className={scope==='day'?'selected':''} onClick={()=>onScope('day')}>선택일</button></div>
       <div className="toolbar-right">{scope==='day'&&<DatePicker days={state.days} date={date} onChange={onDate}/>}<label className="sr-only" htmlFor="teacher-filter">교사별 조회</label><select id="teacher-filter" className="control teacher-filter" value={teacher} onChange={e=>onTeacher(e.target.value)}><option value="all">전체 교사</option>{state.teachers.map(t=><option key={t.id} value={t.id}>{t.name} · {teacherLoad(state,t.id)}교시</option>)}</select><button className="button secondary compact" onClick={exportRows}><Download size={16}/>내려받기</button></div></div>
       <div className="table-caption"><p><strong>{teacher==='all'?'반별 임장 시간표':`${teacher} 선생님 임장 시간표`}</strong><span>교사 이름을 누르면 담당 교사를 변경할 수 있습니다.</span></p><label className="checkbox-label"><input type="checkbox" checked={showEmpty} onChange={e=>setShowEmpty(e.target.checked)}/>미운영일 포함</label></div>
