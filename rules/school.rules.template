@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Dedicated single-school database. No anonymous data access.
+    // Dedicated single-school database. No unauthenticated or arbitrary-account access.
     // school/config: immutable bounded master JSON + immutable lookup maps,
     //   created once by the pinned owner after validating the initial-data digest.
     // school/live: revision (int), updatedAt (timestamp), updatedBy (uid), lastLog.
@@ -9,10 +9,13 @@ service cloud.firestore {
     // attendance/{date|studentId|period}: one typed record per student/period.
     //   'unrecorded' is a reversible tombstone; client deletion is forbidden.
     // history/{autoId}: immutable structured event committed with the live head.
-    // access/{lowercaseEmail}: teacherId, canonical displayName, enabled, edit stamp.
-    //   Only the owner and that account can read an email grant; only owner edits.
-    // Shared school records are intentionally readable by explicitly registered
-    // teachers, as required for the two management classes and original rosters.
+    // security/shared: enabled (bool), validAfter (auth_time integer), updatedAt,
+    //   updatedBy. Only the Google owner can change the shared access gate.
+    // Password verification is performed by Firebase Authentication, not these
+    // rules or a public password hash. Only its dedicated pinned UID is a member.
+    // access/{email}: legacy grants, owner read only; no longer authorize access.
+    // School records are intentionally shared with anyone given the common
+    // password, as explicitly requested by the school operator.
 
     function signed() {
       return request.auth != null && request.auth.token.email_verified == true
@@ -20,9 +23,16 @@ service cloud.firestore {
     }
     function ownerId() { return request.auth.uid == '__OWNER_UID__'; }
     function isOwner() { return signed() && ownerId(); }
-    function ownEmail() { return request.auth.token.email.lower(); }
-    function grant() { return get(/databases/$(database)/documents/access/$(ownEmail())).data; }
-    function member() { return signed() && (ownerId() || grant().enabled == true); }
+    function sharedIdentity() {
+      return request.auth != null && request.auth.uid == '__SHARED_UID__'
+        && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+    function sharedGate() { return get(/databases/$(database)/documents/security/shared).data; }
+    function sharedMember() {
+      return sharedIdentity() && sharedGate().enabled == true
+        && request.auth.token.auth_time is int && request.auth.token.auth_time >= sharedGate().validAfter;
+    }
+    function member() { return isOwner() || sharedMember(); }
     function config() { return get(/databases/$(database)/documents/school/config).data; }
     function configAfter() { return getAfter(/databases/$(database)/documents/school/config).data; }
     function head() { return get(/databases/$(database)/documents/school/live).data; }
@@ -31,7 +41,7 @@ service cloud.firestore {
     function fields(d, keys) { return d is map && d.keys().hasOnly(keys) && d.keys().hasAll(keys); }
     function text(s, min, max) { return s is string && s.size() >= min && s.size() <= max; }
     function stamp(time, uid) { return time is timestamp && time == request.time && text(uid,1,128) && uid == request.auth.uid; }
-    function actor(name) { return text(name, 1, 80) && ((ownerId() && name == '관리자') || name == grant().displayName); }
+    function actor(name) { return text(name, 1, 80) && ((ownerId() && name == '관리자') || (sharedIdentity() && name == '공용 접속')); }
     function sameKeys(a,b) { return a is map && b is map && a.size() == b.size() && a.keys().hasOnly(b.keys()); }
     function inBatch(revision) {
       return revision is int && revision == head().revision + 1
@@ -144,12 +154,10 @@ service cloud.firestore {
         && d.kind == 'attendance' && validLogBase(d) && text(d.firstStudentId,1,10)
         && record.revision == d.revision && record.updatedBy == request.auth.uid && record.updatedAt == request.time;
     }
-    function validGrant(d,email) {
-      return fields(d,['teacherId','displayName','enabled','updatedAt','updatedBy'])
-        && text(email,3,254) && email == email.lower() && email.matches('^[a-z0-9._%+-]+@[a-z0-9.-]+[.][a-z]{2,63}$')
-        && text(d.teacherId,1,80) && text(d.displayName,1,80)
-        && d.displayName == config().teacherNames.get(d.teacherId,'')
-        && d.enabled is bool && stamp(d.updatedAt,d.updatedBy);
+    function validSharedGate(d) {
+      return fields(d,['enabled','validAfter','updatedAt','updatedBy'])
+        && d.enabled is bool && d.validAfter is int && d.validAfter >= 0 && d.validAfter <= 4102444800
+        && stamp(d.updatedAt,d.updatedBy);
     }
     match /school/config {
       allow read: if member();
@@ -183,9 +191,12 @@ service cloud.firestore {
       allow update,delete: if false;
     }
     match /access/{email} {
-      allow get: if isOwner() || (signed() && ownEmail() == email);
-      allow list: if isOwner();
-      allow create,update: if isOwner() && validGrant(request.resource.data,email);
+      allow read: if isOwner();
+      allow write: if false;
+    }
+    match /security/shared {
+      allow get: if isOwner() || sharedIdentity();
+      allow create,update: if isOwner() && validSharedGate(request.resource.data);
       allow delete: if false;
     }
     match /{document=**} { allow read,write: if false; }

@@ -10,5 +10,7 @@
     "version": "2"
   },
   "databaseId": "school-hub",
-  "ownerUid": "IGJToICMb2hAVLVSsgjPqUJNVWh2"
+  "ownerUid": "IGJToICMb2hAVLVSsgjPqUJNVWh2",
+  "sharedAccountUid": "shared-212fb8d72e24b88dc525bbb3",
+  "sharedAccountEmail": "shared-access@school-study-hub-2026-n4k7.invalid"
 }

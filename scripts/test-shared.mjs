@@ -18,23 +18,25 @@ for(const name of ['domain','mutations','initial-data-digest','cloud-model','fir
 }
 const load=name=>import(pathToFileURL(path.join(out,name+'.mjs')).href);
 const domain=await load('domain'),{buildCloudConfig,cloudSchedule}=await load('cloud-model'),{createSharedClient}=await load('shared-client');
-const {watchTeacherAccess}=await load('teacher-access');
+const {watchWorkspaceAccess}=await load('teacher-access');
 globalThis.window={dispatchEvent(){}};
 setLogLevel('silent');
-const rules=(await fs.readFile('rules/school.rules.template','utf8')).replaceAll('__OWNER_UID__','owner-test');
+const rules=(await fs.readFile('rules/school.rules.template','utf8')).replaceAll('__OWNER_UID__','owner-test').replaceAll('__SHARED_UID__','shared-test');
 const env=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:8180,rules}});
 const token=email=>({email,email_verified:true,firebase:{sign_in_provider:'google.com'}});
 const owner=env.authenticatedContext('owner-test',token('owner@example.test')).firestore();
-const teacher=env.authenticatedContext('teacher-test',token('teacher@example.test')).firestore();
+const passwordToken={email:'shared@example.test',email_verified:false,auth_time:100,firebase:{sign_in_provider:'password'}};
+const teacher=env.authenticatedContext('shared-test',passwordToken).firestore();
 const clients=[];let checks=0,stopAccess=()=>{};
 async function ok(label,fn){await fn();checks++;console.log('PASS '+label);}
 const state=makeFixture(domain);
 async function read(db,p){return (await getDoc(doc(db,p))).data();}
 async function rawAttendance(overrides={},options={}){
-  const h=await read(owner,'school/live'),at=serverTimestamp(),logRef=doc(collection(owner,'history'));
-  const d={studentId:'1-1',date:'2026-11-30',period:2,room:1,status:'present',note:'',updatedAt:at,updatedBy:'owner-test',actorName:'관리자',revision:h.revision+1,...overrides};
-  const log={revision:d.revision,kind:'attendance',date:d.date,room:d.room,period:d.period,firstStudentId:d.studentId,actorUid:'owner-test',actorName:'관리자',createdAt:at,...options.log};
-  const batch=writeBatch(owner);batch.set(doc(owner,'attendance',`${d.date}|${d.studentId}|${d.period}`),d);batch.set(logRef,log);batch.update(doc(owner,'school/live'),{revision:h.revision+1,updatedAt:at,updatedBy:'owner-test',lastLog:logRef.id});return batch.commit();
+  const target=options.db??owner,uid=options.uid??'owner-test',actorName=options.actorName??'관리자';
+  const h=await read(owner,'school/live'),at=serverTimestamp(),logRef=doc(collection(target,'history'));
+  const d={studentId:'1-1',date:'2026-11-30',period:2,room:1,status:'present',note:'',updatedAt:at,updatedBy:uid,actorName,revision:h.revision+1,...overrides};
+  const log={revision:d.revision,kind:'attendance',date:d.date,room:d.room,period:d.period,firstStudentId:d.studentId,actorUid:uid,actorName,createdAt:at,...options.log};
+  const batch=writeBatch(target);batch.set(doc(target,'attendance',`${d.date}|${d.studentId}|${d.period}`),d);batch.set(logRef,log);batch.update(doc(target,'school/live'),{revision:h.revision+1,updatedAt:at,updatedBy:uid,lastLog:logRef.id});return batch.commit();
 }
 async function rawSchedule(id,to,extra={}){
   const h=await read(owner,'school/live'),s=await read(owner,'school/schedule'),at=serverTimestamp(),logRef=doc(collection(owner,'history'));
@@ -49,29 +51,30 @@ const post=(c,body)=>c.request('/api/mutate',{method:'POST',body:JSON.stringify(
 try{
   await ok('owner bootstrap uses real rules',async()=>{
     const at=serverTimestamp(),batch=writeBatch(owner);
+    batch.set(doc(owner,'security/shared'),{enabled:true,validAfter:0,updatedAt:at,updatedBy:'owner-test'});
     batch.set(doc(owner,'school/config'),buildCloudConfig(state,'owner-test',at));
     batch.set(doc(owner,'school/schedule'),cloudSchedule(state,'owner-test',at));
     batch.set(doc(owner,'school/live'),{revision:0,updatedAt:at,updatedBy:'owner-test',lastLog:''});
     await assertSucceeds(batch.commit());
   });
   await ok('anonymous, unregistered, unverified and wrong provider denied',async()=>{
-    const contexts=[env.unauthenticatedContext(),env.authenticatedContext('stranger',token('stranger@example.test')),env.authenticatedContext('unverified',{...token('teacher@example.test'),email_verified:false}),env.authenticatedContext('wrong',{...token('teacher@example.test'),firebase:{sign_in_provider:'password'}})];
+    const contexts=[env.unauthenticatedContext(),env.authenticatedContext('stranger',token('stranger@example.test')),env.authenticatedContext('owner-test',{...token('owner@example.test'),email_verified:false}),env.authenticatedContext('another-password-user',passwordToken),env.authenticatedContext('shared-test',token('shared@example.test')),env.authenticatedContext('shared-test',{...passwordToken,firebase:{sign_in_provider:'anonymous'}}),env.authenticatedContext('owner-test',passwordToken)];
     for(const c of contexts){const db=c.firestore();await assertFails(getDoc(doc(db,'school/config')));await assertFails(getDocs(collection(db,'attendance')));}
   });
-  await ok('owner registers canonical teacher grant; teacher cannot grant access',async()=>{
-    const grant={teacherId:'teacher05',displayName:'예시교사5',enabled:true,updatedAt:serverTimestamp(),updatedBy:'owner-test'};
-    await assertSucceeds(setDoc(doc(owner,'access/teacher@example.test'),grant));
-    await assertSucceeds(getDoc(doc(teacher,'school/config')));
-    await assertSucceeds(getDoc(doc(teacher,'access/teacher@example.test')));
+  await ok('dedicated password account reads school data without an email grant',async()=>{
+    await assertSucceeds(getDocFromServer(doc(teacher,'school/config')));
+    await assertSucceeds(getDoc(doc(teacher,'security/shared')));
     await assertFails(getDocs(collection(teacher,'access')));
     await assertFails(getDoc(doc(teacher,'access/owner@example.test')));
-    await assertFails(setDoc(doc(teacher,'access/stranger@example.test'),{...grant,updatedBy:'teacher-test'}));
-    await assertFails(setDoc(doc(owner,'access/forged@example.test'),{...grant,isAdmin:true}));
+    await assertFails(setDoc(doc(teacher,'access/stranger@example.test'),{enabled:true,isAdmin:true}));
+    await assertFails(setDoc(doc(teacher,'security/shared'),{enabled:true,validAfter:0,updatedAt:serverTimestamp(),updatedBy:'shared-test'}));
+    await assertFails(setDoc(doc(owner,'security/shared'),{enabled:true,validAfter:0,updatedAt:serverTimestamp(),updatedBy:'owner-test',isAdmin:true}));
   });
-  const ownUser={uid:'owner-test',email:'owner@example.test'},teacherUser={uid:'teacher-test',email:'teacher@example.test'};
-  const first=createSharedClient(owner,{currentUser:ownUser},ownUser,'관리자',true,()=>{}),second=createSharedClient(teacher,{currentUser:teacherUser},teacherUser,'예시교사5',false,()=>{});clients.push(first,second);
-  // Match App's access watcher: removing a grant disposes the shared client.
-  stopAccess=watchTeacherAccess(teacher,teacherUser,'owner-test',grant=>{if(!grant)second.dispose();},()=>second.dispose());
+  const syntheticToken='e30.'+Buffer.from(JSON.stringify({auth_time:100,iat:100,exp:4102444800,firebase:{sign_in_provider:'password'}})).toString('base64url')+'.synthetic';
+  const ownUser={uid:'owner-test',email:'owner@example.test'},teacherUser={uid:'shared-test',email:'shared@example.test',emailVerified:false,providerData:[{providerId:'password'}],getIdToken:async()=>syntheticToken};
+  const first=createSharedClient(owner,{currentUser:ownUser},ownUser,'관리자',true,()=>{}),second=createSharedClient(teacher,{currentUser:teacherUser},teacherUser,'공용 접속',false,()=>{});clients.push(first,second);
+  // Match App's gate watcher: suspending access discards the shared client.
+  stopAccess=watchWorkspaceAccess(teacher,teacherUser,{ownerUid:'owner-test',sharedAccountUid:'shared-test'},role=>{if(!role)second.dispose();},()=>second.dispose());
   await ok('both actual shared clients initialize from server',async()=>{assert.equal((await snapshot(first)).revision,0);assert.equal((await snapshot(second)).revision,0);});
   await ok('attendance edit broadcasts and reversible clear uses tombstone',async()=>{
     let s=await snapshot(first);let r=await post(first,{kind:'attendance',date:'2026-11-30',room:1,period:1,changes:[{studentId:'1-1',status:'present',note:'가상 확인'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());
@@ -92,6 +95,16 @@ try{
     for(const a of s.state.assignments){for(const b of s.state.assignments){if(a.id===b.id||a.teacherId===b.teacherId)continue;const next=s.state.assignments.map(x=>x.id===a.id?{...x,teacherId:b.teacherId}:x.id===b.id?{...x,teacherId:a.teacherId}:x);if(!domain.scheduleErrors(s.state,next).length){choice={a,b};break;}}if(choice)break;}
     assert.ok(choice);const r=await post(first,{kind:'schedule',assignmentId:choice.a.id,teacherId:choice.b.teacherId,swapId:choice.b.id,reason:'가상 맞교환',baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());const n=await r.json();await waitRevision(second,n.revision);assert.equal(second.snapshot().state.assignments.find(a=>a.id===choice.a.id).teacherId,choice.b.teacherId);
   });
+  await ok('two browsers using the same password identity cannot overwrite each other',async()=>{
+    const anotherDb=env.authenticatedContext('shared-test',passwordToken).firestore();
+    const third=createSharedClient(anotherDb,{currentUser:teacherUser},teacherUser,'공용 접속',false,()=>{});
+    try{
+      await snapshot(third);const s=await snapshot(second);await waitRevision(third,s.revision);
+      const body={kind:'attendance',date:'2026-11-30',room:1,period:6,changes:[{studentId:'3-1',status:'present',note:''}],baseRevision:s.revision};
+      const results=await Promise.all([post(second,body),post(third,{...body,changes:[{studentId:'1-1',status:'experience',note:''}]})]);
+      assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);await waitRevision(first,s.revision+1);await waitRevision(second,s.revision+1);
+    }finally{third.dispose();}
+  });
   await ok('valid single timetable change commits with correct counts',async()=>{
     const s=await snapshot(first);let choice;
     for(const a of s.state.assignments){for(const t of s.state.teachers){if(a.teacherId===t.id||!a.teacherId.match(/teacher(0[5-9]|1[0-3])/))continue;const next=s.state.assignments.map(x=>x.id===a.id?{...x,teacherId:t.id}:x);if(!domain.scheduleErrors(s.state,next).length){choice={a,t};break;}}if(choice)break;}
@@ -107,17 +120,26 @@ try{
     for(const patch of [{date:'2026-12-11'},{period:7},{studentId:'2-1'},{note:'x'.repeat(301)},{status:'forged'},{isAdmin:true},{updatedBy:'teacher-test'},{actorName:'다른 교사'},{revision:999}])await assertFails(rawAttendance(patch));
     await assertFails(rawAttendance({},{log:{firstStudentId:'13-24'}}));
   });
+  await ok('password holder cannot impersonate administrator in saved records',async()=>{
+    await assertFails(rawAttendance({actorName:'관리자'},{db:teacher,uid:'shared-test',actorName:'공용 접속'}));
+  });
   await ok('master and history immutable; orphan writes and record deletes denied',async()=>{
     const h=await read(owner,'school/live');await assertFails(setDoc(doc(owner,'school/live'),{...h,revision:h.revision+1,updatedAt:serverTimestamp()}));
     const logs=await getDocs(collection(owner,'history'));await assertFails(setDoc(logs.docs[0].ref,{forged:true}));
     await assertFails(deleteDoc(doc(owner,'attendance/2026-11-30|1-1|1')));
     await assertFails(setDoc(doc(owner,'school/config'),{forged:true}));
   });
-  await ok('revoked teacher cannot read or write',async()=>{
-    const grant=await read(owner,'access/teacher@example.test');await setDoc(doc(owner,'access/teacher@example.test'),{...grant,enabled:false,updatedAt:serverTimestamp(),updatedBy:'owner-test'});
-    const fresh=env.authenticatedContext('revoked-test',token('teacher@example.test')).firestore();
+  await ok('shared access suspension blocks reads and discards the live cache',async()=>{
+    const gate=await read(owner,'security/shared');await setDoc(doc(owner,'security/shared'),{...gate,enabled:false,updatedAt:serverTimestamp(),updatedBy:'owner-test'});
+    const fresh=env.authenticatedContext('shared-test',{...passwordToken,auth_time:101}).firestore();
     await assertFails(getDocFromServer(doc(fresh,'school/config')));await assertFails(setDoc(doc(teacher,'attendance/forged'),{status:'present'}));
-    const until=Date.now()+5000;while(second.snapshot()&&Date.now()<until)await new Promise(r=>setTimeout(r,25));assert.equal(second.snapshot(),null,'Revoked live listener must discard its cache');
+    const until=Date.now()+5000;while(second.snapshot()&&Date.now()<until)await new Promise(r=>setTimeout(r,25));assert.ok(second.snapshot()===null,'Suspended password access must discard its live cache');
+  });
+  await ok('session cutoff rejects old sessions and allows a fresh password login',async()=>{
+    await setDoc(doc(owner,'security/shared'),{enabled:true,validAfter:200,updatedAt:serverTimestamp(),updatedBy:'owner-test'});
+    const old=env.authenticatedContext('shared-test',{...passwordToken,auth_time:199}).firestore();
+    const fresh=env.authenticatedContext('shared-test',{...passwordToken,auth_time:201}).firestore();
+    await assertFails(getDocFromServer(doc(old,'school/config')));await assertSucceeds(getDocFromServer(doc(fresh,'school/config')));
   });
   console.log(JSON.stringify({checks,passed:true,fixture:'fully synthetic',projectId,productionWrites:0}));
 }finally{stopAccess();for(const c of clients)c.dispose();await env.cleanup();}
