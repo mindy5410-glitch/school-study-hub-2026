@@ -1,8 +1,9 @@
 'use client';
 import {useCallback,useEffect,useState} from 'react';
 import {Calendar,ClipboardList,School,Settings,History,RefreshCw,Check,AlertCircle,X,ChevronRight,LogOut,Loader2,ArrowLeftRight} from 'lucide-react';
-import type {Assignment,AttendanceChange,Room,Snapshot} from '../lib/types';
-import {getRecord,sameAttendance,teacherLoad} from '../lib/domain';
+import type {Assignment,Room,Snapshot} from '../lib/types';
+import {getRecord} from '../lib/domain';
+import {attendanceChanges} from '../lib/attendance-form';
 import {ScheduleEditor,ScheduleView,type ScheduleMutation} from './components/schedule';
 import {AttendanceView,type Drafts} from './components/attendance';
 import {OriginalView} from './components/original';
@@ -26,6 +27,7 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
   const [edit,setEdit]=useState<Assignment|null>(null),[rules,setRules]=useState(false),[history,setHistory]=useState(false);
   const [pendingNav,setPendingNav]=useState<(()=>void)|null>(null),[toast,setToast]=useState<Toast|null>(null);
   const dirty=Object.keys(drafts).length>0;
+  const attendanceNeedsSave=!!snapshot&&view==='attendance'&&attendanceChanges(snapshot.state,date,room,period,drafts).length>0;
   useEffect(()=>{if(!dirty)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
   const load=useCallback(async()=>{
     const response=await request('/api/state',{cache:'no-store'});const json=await response.json()as Snapshot&{error?:string};
@@ -61,7 +63,7 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
     }catch(e){if(e instanceof RequestError&&e.status===409)setToast({message:e.message,error:true});throw e;}finally{setSaving(false);}
   };
   const saveAttendance=async()=>{
-    if(!snapshot)return;const changes:AttendanceChange[]=Object.entries(drafts).filter(([id,v])=>!sameAttendance(getRecord(snapshot.state,id,date,period),v)).map(([studentId,v])=>({studentId,...v}));
+    if(!snapshot)return;const changes=attendanceChanges(snapshot.state,date,room,period,drafts);
     if(!changes.length)return;const oldChanges=changes.map(c=>{const old=getRecord(snapshot.state,c.studentId,date,period);return {studentId:c.studentId,status:old?.status??null,note:old?.note??''};});
     const context={date,room,period};setSaving(true);
     try{
@@ -72,11 +74,11 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
     }catch(e){setToast({message:e instanceof Error?e.message:'저장하지 못했습니다.',error:true});}finally{setSaving(false);}
   };
   const selected=views.find(v=>v.id===view)!;
-  return <div className={`app-shell ${dirty?'has-drafts':''}`}>
+  return <div className={`app-shell ${dirty||attendanceNeedsSave?'has-drafts':''}`}>
     <ServiceHeader displayName={displayName} onHome={()=>guard(()=>setView('schedule'))} onRules={()=>setRules(true)} onSignOut={()=>guard(onSignOut)}>
       <nav className="service-navigation" aria-label="운영 메뉴"><div className="service-inner">{views.map(v=><button key={v.id} className={view===v.id?'active':''} aria-current={view===v.id?'page':undefined} onClick={()=>guard(()=>setView(v.id))}><v.icon size={21}/>{v.label}</button>)}</div></nav>
     </ServiceHeader>
-    <main id="main-content" className="main-content" tabIndex={-1}><Breadcrumb current={selected.title} onHome={()=>guard(()=>setView('schedule'))}/><header className="page-heading"><div><span className="eyebrow">체험학습 운영</span><h1>{selected.title}</h1></div><div className="heading-actions">{snapshot&&<span className="saved-status" role="status"><Check size={14}/>저장됨<small>{formatSaved(snapshot.updatedAt)}</small></span>}<button className="icon-button bordered" aria-label="최신 내용 새로고침" disabled={refreshing||saving} onClick={refresh}><RefreshCw size={17} className={refreshing?'spin':''}/></button><button className="button secondary compact" onClick={()=>setHistory(true)}><History size={16}/>변경 내역</button></div></header>
+    <main id="main-content" className="main-content" tabIndex={-1}><Breadcrumb current={selected.title} onHome={()=>guard(()=>setView('schedule'))}/><header className="page-heading"><div><span className="eyebrow">체험학습 운영</span><h1>{selected.title}</h1></div><div className="heading-actions">{snapshot&&<span className={`saved-status ${attendanceNeedsSave?'pending':''}`} role="status">{attendanceNeedsSave?'저장 전':<><Check size={14}/>저장됨<small>{formatSaved(snapshot.updatedAt)}</small></>}</span>}<button className="icon-button bordered" aria-label="최신 내용 새로고침" disabled={refreshing||saving} onClick={refresh}><RefreshCw size={17} className={refreshing?'spin':''}/></button><button className="button secondary compact" onClick={()=>setHistory(true)}><History size={16}/>변경 내역</button></div></header>
       {!snapshot?loadError?<section className="panel error-panel"><AlertCircle size={28}/><h2>운영 자료를 불러오지 못했습니다</h2><p>{loadError}</p><button className="button primary" onClick={()=>{setLoadError('');load().catch(e=>setLoadError(e.message));}}>다시 불러오기</button>{loadError.includes('로그인')&&<a href="/signin-with-chatgpt?return_to=%2F" target="_top">로그인하기</a>}</section>:<Loading/>:<>
         {view==='schedule'&&<ScheduleView snapshot={snapshot} date={date} onDate={changeDate} teacher={teacher} onTeacher={setTeacher} scope={scope} onScope={setScope} onEdit={setEdit}/>}
         {view==='attendance'&&<AttendanceView snapshot={snapshot} date={date} room={room} period={period} onDate={changeDate} onRoom={r=>guard(()=>{setRoom(r);setAttendanceSearch('');})} onPeriod={p=>guard(()=>setPeriod(p))} drafts={drafts} onDrafts={setDrafts} onSave={saveAttendance} saving={saving} search={attendanceSearch} onSearch={setAttendanceSearch}/>}

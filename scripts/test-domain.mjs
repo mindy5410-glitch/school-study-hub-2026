@@ -6,6 +6,7 @@ const url=s=>'data:text/javascript;base64,'+Buffer.from(s).toString('base64');
 const domainUrl=url(compile(await fs.readFile('lib/domain.ts','utf8'))),domain=await import(domainUrl);
 const source=compile((await fs.readFile('lib/mutations.ts','utf8')).replace("from './domain'","from '"+domainUrl+"'"));
 const {applyMutation}=await import(url(source));
+const attendanceForm=await import(url(compile((await fs.readFile('lib/attendance-form.ts','utf8')).replace("from './domain'","from '"+domainUrl+"'"))));
 const date='2026-11-30',state={schemaVersion:1,students:[{id:'1-1',classNo:1,number:1,name:'예시 학생1',originalName:'예시 학생1'},{id:'2-1',classNo:2,number:1,name:'예시 학생2',originalName:'예시 학생2'}],days:[{date,weekday:'월',periods:6}],participants:[{studentId:'1-1',date,room:1,leavePeriod:5},{studentId:'2-1',date,room:2,leavePeriod:null}],teachers:['A','B','C','D'].map(id=>({id,name:id,minDuties:id==='A'?2:0,maxDuties:id==='A'?3:null,preferredDuties:3})),assignments:[],blocked:[{teacherId:'A',weekday:'월',period:4,grade:1,classNo:1,subject:'예시',sourceCell:'예시'}],attendance:{},settings:{roomNames:{1:'기간1반',2:'기간2반'},leaveStartPeriod:5,leaveStartTime:'14:00',excludedTeachers:['제외 교사'],sourceVersion:'test',weeklyTimetableRepeats:true,wednesday56NoRegularLessons:true}};
 for(const room of [1,2])for(let p=1;p<=6;p++)state.assignments.push({id:`${date}-${room}-${p}`,date,room,period:p,teacherId:(room===1?['A','B']:['C','D'])[(p-1)%2]});
 // Keep a pupil present in period five so all fixture duty slots operate.
@@ -13,6 +14,22 @@ state.participants.push({studentId:'1-2',date,room:1,leavePeriod:null});state.st
 assert.deepEqual(domain.scheduleErrors(state,state.assignments),[]);
 assert.equal(domain.expectedStatus(state,'1-1',date,4),'present');assert.equal(domain.expectedStatus(state,'1-1',date,5),'experience');
 const snapshot={state,revision:0,updatedAt:'2026-11-13T00:00:00.000Z',history:[]};
+assert.deepEqual(attendanceForm.attendanceInput(state,'1-1',date,4),{status:'present',note:''});
+assert.deepEqual(attendanceForm.attendanceInput(state,'1-1',date,5),{status:'experience',note:''});
+const defaultChanges=attendanceForm.attendanceChanges(state,date,1,4);
+assert.deepEqual(defaultChanges,[{studentId:'1-1',status:'present',note:''},{studentId:'1-2',status:'present',note:''}]);
+assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,5),[{studentId:'1-1',status:'experience',note:''},{studentId:'1-2',status:'present',note:''}]);
+assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,4,{'1-1':{status:'absent',note:'결석 확인'},'2-1':{status:'absent',note:'다른 관리반'}}),[{studentId:'1-1',status:'absent',note:'결석 확인'},{studentId:'1-2',status:'present',note:''}]);
+assert.equal(Object.keys(state.attendance).length,0,'Selecting defaults must not write attendance');
+const defaultsSaved=applyMutation(snapshot,{kind:'attendance',date,room:1,period:4,changes:defaultChanges,baseRevision:0},'검증');
+assert.deepEqual(attendanceForm.attendanceChanges(defaultsSaved.state,date,1,4),[]);
+assert.equal(Object.keys(defaultsSaved.state.attendance).length,2);
+assert.equal(domain.getRecord(defaultsSaved.state,'1-1',date,5),undefined,'Confirmation must affect only the selected period');
+assert.equal(domain.getRecord(defaultsSaved.state,'2-1',date,4),undefined,'Confirmation must affect only the selected room');
+const previouslyMarked=structuredClone(state);
+previouslyMarked.attendance[domain.recordKey(date,'1-1',4)]={studentId:'1-1',date,period:4,status:'absent',note:'이미 확인한 결석',updatedAt:'2026-11-13T00:00:00.000Z',updatedBy:'검증'};
+assert.deepEqual(attendanceForm.attendanceInput(previouslyMarked,'1-1',date,4),{status:'absent',note:'이미 확인한 결석'});
+assert.deepEqual(attendanceForm.attendanceChanges(previouslyMarked,date,1,4),[{studentId:'1-2',status:'present',note:''}]);
 const schedule={kind:'schedule',assignmentId:`${date}-1-1`,teacherId:'C',swapId:`${date}-2-1`,baseRevision:0};
 const changed=applyMutation(snapshot,schedule,'검증');assert.equal(changed.state.assignments[0].teacherId,'C');assert.equal(state.assignments[0].teacherId,'A');
 assert.throws(()=>applyMutation(snapshot,{...schedule,swapId:undefined},'검증'),e=>e.status===422);
@@ -23,4 +40,4 @@ let result=applyMutation(snapshot,attendance,'검증');assert.equal(result.state
 const next={...snapshot,state:result.state,revision:1};result=applyMutation(next,{...attendance,changes:[{studentId:'1-1',status:'late',note:'수정'}],baseRevision:1},'검증');assert.equal(result.state.attendance[`${date}|1-1|4`].note,'수정');
 assert.throws(()=>applyMutation(next,attendance,'검증'),e=>e.status===409);
 for(const change of [{date:'2026-12-11'},{period:7},{changes:[{studentId:'2-1',status:'present',note:''}]},{changes:[{studentId:'1-1',status:'present',note:'x'.repeat(301)}]}])assert.throws(()=>applyMutation(snapshot,{...attendance,...change},'검증'),e=>e.status===400);
-console.log(JSON.stringify({checks:'passed',scope:['lesson exclusion','simultaneous duty','swap','departure boundary','attendance edit','stale revision','day/period/roster/note validation'],fixture:'synthetic only'}));
+console.log(JSON.stringify({checks:'passed',scope:['lesson exclusion','simultaneous duty','swap','departure boundary','attendance defaults','default confirmation scope','saved exceptions and notes','attendance edit','stale revision','day/period/roster/note validation'],fixture:'synthetic only'}));
