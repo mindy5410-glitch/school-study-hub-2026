@@ -39,11 +39,3 @@ export function EmptyState({title,description,icon}:{title:string;description?:s
 }
 export function Loading({label='자료를 불러오고 있습니다'}:{label?:string}){return <div className="loading"><Loader2 className="spin" size={23}/><p>{label}</p></div>;}
 export function formatSaved(value:string){return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(value));}
-export function downloadCSV(filename:string,rows:(string|number|null|undefined)[][]){
-  const csv=rows.map(row=>row.map(value=>{
-    let s=String(value??'');if(/^[=+@-]/.test(s))s="'"+s;
-    return '"'+s.replace(/"/g,'""')+'"';
-  }).join(',')).join('\r\n');
-  const url=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'}));
-  const a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-}

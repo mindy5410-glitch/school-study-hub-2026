@@ -1,9 +1,9 @@
 'use client';
 import {useMemo} from 'react';
-import {CheckCheck,Save,Loader2,Search,Download} from 'lucide-react';
+import {CheckCheck,Save,Loader2,Search} from 'lucide-react';
 import type {AttendanceStatus,Room,Snapshot} from '../../lib/types';
 import {expectedStatus,getRecord,roomRoster,sameAttendance,schoolDate,STATUS,statusOptions} from '../../lib/domain';
-import {DatePicker,EmptyState,StatusBadge,downloadCSV} from './ui';
+import {DatePicker,EmptyState,StatusBadge} from './ui';
 
 export type Drafts=Record<string,{status:AttendanceStatus|null;note:string}>;
 export function AttendanceView({snapshot,date,room,period,onDate,onRoom,onPeriod,drafts,onDrafts,onSave,saving,search,onSearch}:{snapshot:Snapshot;date:string;room:Room;period:number;onDate:(d:string)=>void;onRoom:(r:Room)=>void;onPeriod:(p:number)=>void;drafts:Drafts;onDrafts:(d:Drafts)=>void;onSave:()=>void;saving:boolean;search:string;onSearch:(s:string)=>void}){
@@ -23,11 +23,8 @@ export function AttendanceView({snapshot,date,room,period,onDate,onRoom,onPeriod
     for(const s of all)if(!getRecord(state,s.id,date,period)&&!next[s.id]?.status)next[s.id]={status:expectedStatus(state,s.id,date,period),note:next[s.id]?.note??''};
     onDrafts(next);
   };
-  const exportRecords=()=>downloadCSV(`체험학습_${date}_기간${room}반_${period}교시.csv`,[
-    ['날짜','관리반','교시','원반','번호','이름','예정','출석 기록','메모'],...all.map(s=>{const r=getRecord(state,s.id,date,period);return [date,`기간${room}반(${room+2}반)`,period,s.classNo,s.number,s.name,expectedStatus(state,s.id,date,period)==='present'?'출석 예정':'체험학습 예정',r?STATUS[r.status].label:'미기록',r?.note??''];}),
-  ]);
   return <>
-    <section className="panel"><div className="panel-toolbar"><DatePicker days={state.days} date={date} onChange={onDate}/><div className="room-tabs"><button className={room===1?'selected':''} onClick={()=>onRoom(1)}>기간1반 <small>3반</small></button><button disabled={date>'2026-12-01'} className={room===2?'selected':''} onClick={()=>onRoom(2)}>기간2반 <small>4반</small></button></div><button className="button secondary compact push-right" onClick={exportRecords}><Download size={16}/>내려받기</button></div>
+    <section className="panel"><div className="panel-toolbar"><DatePicker days={state.days} date={date} onChange={onDate}/><div className="room-tabs"><button className={room===1?'selected':''} onClick={()=>onRoom(1)}>기간1반 <small>3반</small></button><button disabled={date>'2026-12-01'} className={room===2?'selected':''} onClick={()=>onRoom(2)}>기간2반 <small>4반</small></button></div></div>
       <div className="period-toolbar"><span className="control-label">교시 선택</span><div className="period-tabs">{Array.from({length:day.periods},(_,i)=><button key={i} className={period===i+1?'selected':''} onClick={()=>onPeriod(i+1)}>{i+1}교시</button>)}</div></div>
       <div className="table-caption"><p><strong>기간{room}반 출석 명단</strong></p><div className="toolbar-right"><label className="search-box"><Search size={16}/><input aria-label="출석 명단 학생 검색" placeholder="이름 또는 원반 검색" value={search} onChange={e=>onSearch(e.target.value)}/></label><button className="button secondary compact" disabled={!unrecorded||saving} onClick={bulk} title="미기록 학생만 출석 또는 체험학습 예정에 따라 입력합니다. 저장 버튼을 눌러 확정하세요."><CheckCheck size={16}/>미기록 일괄 입력</button></div></div>
       {!all.length?<EmptyState title="출석 예정 학생이 없습니다"/>:!roster.length?<EmptyState title="검색한 학생이 없습니다"/>:<div className="table-scroll"><table className="attendance-table"><thead><tr><th scope="col">원반</th><th scope="col">번호</th><th scope="col">학생</th><th scope="col">해당 교시 예정</th><th scope="col">실제 출석 기록</th><th scope="col">메모</th></tr></thead><tbody>{roster.map(s=>{
