@@ -10,6 +10,7 @@ import {createSharedClient,type SharedClient} from './lib/shared-client';
 import './app/globals.css';
 import './app/accounts.css';
 import './app/status.css';
+import './app/krds.css';
 
 function App(){
   const [project,setProject]=useState<ProjectConfig|null>(null),[firebase,setFirebase]=useState<SchoolFirebase|null>(null);

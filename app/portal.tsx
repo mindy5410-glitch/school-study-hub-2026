@@ -7,6 +7,7 @@ import {ScheduleEditor,ScheduleView,type ScheduleMutation} from './components/sc
 import {AttendanceView,type Drafts} from './components/attendance';
 import {OriginalView} from './components/original';
 import {Loading,Modal,formatSaved} from './components/ui';
+import {ServiceHeader,ServiceFooter,Breadcrumb} from './components/service-layout';
 
 type View='schedule'|'attendance'|'original';
 type Toast={message:string;error?:boolean;action?:{label:string;run:()=>void}};
@@ -72,22 +73,20 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
   };
   const selected=views.find(v=>v.id===view)!;
   return <div className={`app-shell ${dirty?'has-drafts':''}`}>
-    <aside className="sidebar"><a className="brand" href="#" onClick={e=>{e.preventDefault();guard(()=>setView('schedule'));}} aria-label="체험학습 운영실 첫 화면"><span className="brand-mark"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M7 26V10l9-5 9 5v16M4 26h24M12 14h2m4 0h2m-8 5h2m4 0h2M14 26v-4h4v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg></span><span>체험학습<strong>운영실</strong></span></a>
-      <div className="sidebar-caption">2026학년도 교외체험학습</div>
-      <nav aria-label="운영 메뉴">{views.map(v=><button key={v.id} className={`nav-item ${view===v.id?'active':''}`} onClick={()=>guard(()=>setView(v.id))}><v.icon size={20}/><span>{v.label}</span><ChevronRight size={15}/></button>)}</nav>
-      <div className="sidebar-period"><span>운영 기간</span><strong>11.30 — 12.29</strong><small>12월 11일 제외</small></div>
-      <div className="sidebar-bottom">{onManage&&<button className="nav-item settings-link" onClick={()=>guard(onManage)}><Settings size={18}/><span>교사 계정 관리</span></button>}<button className="nav-item settings-link" onClick={()=>setRules(true)}><Settings size={18}/><span>운영 기준</span></button><div className="profile"><span className="avatar">{displayName.slice(0,1).toUpperCase()}</span><div><strong title={displayName}>{displayName}</strong><small>로그인하여 이용 중</small></div><button className="signout" onClick={()=>guard(onSignOut)} aria-label="로그아웃"><LogOut size={17}/></button></div></div>
-    </aside>
-    <main className="main-content"><div className="account-strip"><strong>{displayName}</strong>{onManage&&<button onClick={()=>guard(onManage)}>교사 계정 관리</button>}<button onClick={()=>guard(onSignOut)}>로그아웃</button></div><header className="page-heading"><div><span className="eyebrow">체험학습 운영</span><h1>{selected.title}</h1><p>{selected.description}</p></div><div className="heading-actions">{snapshot&&<span className="saved-status"><Check size={14}/>저장됨<small>{formatSaved(snapshot.updatedAt)}</small></span>}<button className="icon-button bordered" aria-label="최신 내용 새로고침" disabled={refreshing||saving} onClick={refresh}><RefreshCw size={17} className={refreshing?'spin':''}/></button><button className="button secondary compact" onClick={()=>setHistory(true)}><History size={16}/>변경 내역</button></div></header>
+    <ServiceHeader displayName={displayName} onHome={()=>guard(()=>setView('schedule'))} onRules={()=>setRules(true)} onSignOut={()=>guard(onSignOut)}>
+      <nav className="service-navigation" aria-label="운영 메뉴"><div className="service-inner">{views.map(v=><button key={v.id} className={view===v.id?'active':''} aria-current={view===v.id?'page':undefined} onClick={()=>guard(()=>setView(v.id))}><v.icon size={21}/>{v.label}</button>)}</div></nav>
+    </ServiceHeader>
+    <main id="main-content" className="main-content" tabIndex={-1}><Breadcrumb current={selected.title} onHome={()=>guard(()=>setView('schedule'))}/><header className="page-heading"><div><span className="eyebrow">체험학습 운영</span><h1>{selected.title}</h1><p>{selected.description}</p></div><div className="heading-actions">{snapshot&&<span className="saved-status" role="status"><Check size={14}/>저장됨<small>{formatSaved(snapshot.updatedAt)}</small></span>}<button className="icon-button bordered" aria-label="최신 내용 새로고침" disabled={refreshing||saving} onClick={refresh}><RefreshCw size={17} className={refreshing?'spin':''}/></button><button className="button secondary compact" onClick={()=>setHistory(true)}><History size={16}/>변경 내역</button></div></header>
       <div className="operation-banner"><School size={18}/><span><strong>11/30·12/1 두 반 운영</strong><span className="banner-separator">·</span>12/2부터 기간1반(3반)으로 통합합니다.</span></div>
       {!snapshot?loadError?<section className="panel error-panel"><AlertCircle size={28}/><h2>운영 자료를 불러오지 못했습니다</h2><p>{loadError}</p><button className="button primary" onClick={()=>{setLoadError('');load().catch(e=>setLoadError(e.message));}}>다시 불러오기</button>{loadError.includes('로그인')&&<a href="/signin-with-chatgpt?return_to=%2F" target="_top">로그인하기</a>}</section>:<Loading/>:<>
         {view==='schedule'&&<ScheduleView snapshot={snapshot} date={date} onDate={changeDate} teacher={teacher} onTeacher={setTeacher} scope={scope} onScope={setScope} onEdit={setEdit}/>}
         {view==='attendance'&&<AttendanceView snapshot={snapshot} date={date} room={room} period={period} onDate={changeDate} onRoom={r=>guard(()=>{setRoom(r);setAttendanceSearch('');})} onPeriod={p=>guard(()=>setPeriod(p))} drafts={drafts} onDrafts={setDrafts} onSave={saveAttendance} saving={saving} search={attendanceSearch} onSearch={setAttendanceSearch}/>}
         {view==='original'&&<OriginalView snapshot={snapshot} date={date} onDate={changeDate} classNo={classNo} onClass={setClassNo} search={originalSearch} onSearch={setOriginalSearch} onOpenRecord={(d,r,p)=>guard(()=>{setDate(d);setRoom(r);setPeriod(p);setAttendanceSearch('');setView('attendance');})}/>}
       </>}
-      <footer className="main-footer">체험학습 운영실<span>2026년 11월 30일 — 12월 29일</span></footer>
+
     </main>
-    <nav className="mobile-nav" aria-label="모바일 운영 메뉴">{views.map(v=><button key={v.id} className={view===v.id?'active':''} onClick={()=>guard(()=>setView(v.id))}><v.icon size={20}/><span>{v.label}</span></button>)}</nav>
+    <ServiceFooter/>
+
     {edit&&snapshot&&<ScheduleEditor snapshot={snapshot} assignmentId={edit.id} onClose={()=>setEdit(null)} onSave={saveSchedule}/>}
     {pendingNav&&<Modal title="저장하지 않은 출석 기록이 있습니다" description="현재 교시의 변경 내용을 저장하지 않고 이동할까요?" onClose={()=>setPendingNav(null)}><div className="modal-actions"><button className="button secondary" onClick={()=>setPendingNav(null)}>돌아가기</button><button className="button primary" onClick={()=>{setDrafts({});pendingNav();setPendingNav(null);}}>저장하지 않고 이동</button></div></Modal>}
     {history&&<Modal title="최근 변경 내역" description="시간표와 출석 기록의 저장 이력을 확인할 수 있습니다." onClose={()=>setHistory(false)} wide><div className="history-list">{!snapshot?.history.length?<div className="empty-history"><History size={25}/><p>아직 저장한 변경이 없습니다.</p></div>:snapshot.history.map(h=><article key={h.id}><span className="history-icon">{h.kind==='schedule'?<Calendar size={17}/>:<ClipboardList size={17}/>}</span><div><strong>{h.summary}</strong><p>{h.actor}<span>·</span>{formatSaved(h.created_at)}</p></div></article>)}</div></Modal>}
