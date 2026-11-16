@@ -1,9 +1,34 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import ts from 'typescript';
+import {makeFixture} from './synthetic-fixture.mjs';
 const compile=s=>ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const url=s=>'data:text/javascript;base64,'+Buffer.from(s).toString('base64');
 const domainUrl=url(compile(await fs.readFile('lib/domain.ts','utf8'))),domain=await import(domainUrl);
+const operatingDays=makeFixture(domain).days;
+const defaultDateCases=[
+  ['2026-11-17T03:00:00Z','2026-11-30'],
+  ['2026-11-29T14:59:59.999Z','2026-11-30'],
+  ['2026-11-29T15:00:00Z','2026-11-30'],
+  ['2026-11-30T14:59:59.999Z','2026-11-30'],
+  ['2026-11-30T15:00:00Z','2026-12-01'],
+  ['2026-12-02T03:00:00Z','2026-12-02'],
+  ['2026-12-04T15:00:00Z','2026-12-07'],
+  ['2026-12-06T03:00:00Z','2026-12-07'],
+  ['2026-12-10T15:00:00Z','2026-12-14'],
+  ['2026-12-24T03:00:00Z','2026-12-24'],
+  ['2026-12-24T15:00:00Z','2026-12-28'],
+  ['2026-12-26T03:00:00Z','2026-12-28'],
+  ['2026-12-28T15:00:00Z','2026-12-29'],
+  ['2026-12-29T14:59:59.999Z','2026-12-29'],
+  ['2026-12-29T15:00:00Z','2026-12-29'],
+  ['2027-01-01T03:00:00Z','2026-12-29'],
+];
+for(const [now,expected]of defaultDateCases)assert.equal(domain.defaultSchoolDate(operatingDays,new Date(now)),expected,`Korean date default at ${now}`);
+const reversedDays=[...operatingDays].reverse(),unmodifiedOrder=reversedDays.map(d=>d.date);
+for(const day of operatingDays)assert.equal(domain.defaultSchoolDate(reversedDays,new Date(`${day.date}T03:00:00Z`)),day.date);
+assert.deepEqual(reversedDays.map(d=>d.date),unmodifiedOrder);
+assert.equal(domain.defaultSchoolDate([],new Date('2026-12-01T03:00:00Z')),'2026-11-30');
 const source=compile((await fs.readFile('lib/mutations.ts','utf8')).replace("from './domain'","from '"+domainUrl+"'"));
 const {applyMutation}=await import(url(source));
 const attendanceForm=await import(url(compile((await fs.readFile('lib/attendance-form.ts','utf8')).replace("from './domain'","from '"+domainUrl+"'"))));
@@ -157,4 +182,4 @@ const undoSnapshot={...snapshot,state:undoState,revision:66,attendanceUndo:undos
 const undoneSave=applyMutation(undoSnapshot,undoBody,'검증');assert.equal(domain.getRecord(undoneSave.state,'3-1',date,3),undefined);assert.equal(domain.getRecord(undoneSave.state,'1-1',date,3).note,'old');
 assert.throws(()=>applyMutation(undoSnapshot,{...undoBody,undoRevision:59},'검증'),e=>e.status===409);
 assert.throws(()=>applyMutation({...undoSnapshot,attendanceUndo:{}},undoBody,'검증'),e=>e.status===409);
-console.log(JSON.stringify({checks:'passed',scope:['lesson exclusion','simultaneous duty','swap','departure boundary','attendance defaults','confirmation scope','persistent undo and anchor order','saved exceptions and notes','stale revision','added duty coverage and combined quotas','later roster editing and cancellation','historical attendance preservation and room locks','multi-day atomic validation and undo','day/period/roster/note validation'],fixture:'synthetic only'}));
+console.log(JSON.stringify({checks:'passed',scope:['Korean date defaults and operating-day bounds','lesson exclusion','simultaneous duty','swap','departure boundary','attendance defaults','confirmation scope','persistent undo and anchor order','saved exceptions and notes','stale revision','added duty coverage and combined quotas','later roster editing and cancellation','historical attendance preservation and room locks','multi-day atomic validation and undo','day/period/roster/note validation'],fixture:'synthetic only'}));

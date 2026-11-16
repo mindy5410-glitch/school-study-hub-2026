@@ -2,7 +2,7 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {Calendar,ClipboardList,School,History,RefreshCw,Check,AlertCircle,X,Loader2} from 'lucide-react';
 import type {Assignment,AttendanceChange,Room,Snapshot} from '../lib/types';
-import {periodKey,roomLabel,roomRoster,schoolDate,slotKey} from '../lib/domain';
+import {defaultSchoolDate,periodKey,roomLabel,roomRoster,schoolDate,slotKey} from '../lib/domain';
 import {attendanceChanges,attendanceResetChanges} from '../lib/attendance-form';
 import {CoverageEditor,ScheduleEditor,ScheduleView,type CoverageMutation,type ScheduleMutation} from './components/schedule';
 import {AttendanceView,type Drafts} from './components/attendance';
@@ -25,6 +25,7 @@ const views=[{id:'schedule' as View,label:'교사 임장',icon:Calendar,title:'�
 export default function Portal({displayName,request,onSignOut,onManage}:{displayName:string;request:(path:string,init?:RequestInit)=>Promise<Response>;onSignOut:()=>void;onManage?:()=>void}){
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null),[loadError,setLoadError]=useState('');
   const [view,setView]=useState<View>('schedule'),[date,setDate]=useState('2026-11-30');
+  const dateInitialized=useRef(false);
   const [room,setRoom]=useState<Room>(1),[period,setPeriod]=useState(1),[classNo,setClassNo]=useState(1);
   const attendanceContext=useRef({date,room,period});attendanceContext.current={date,room,period};
   const [teacher,setTeacher]=useState('all'),[scope,setScope]=useState<'all'|'day'>('all');
@@ -40,6 +41,7 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
   const load=useCallback(async()=>{
     const response=await request('/api/state',{cache:'no-store'});const json=await response.json()as Snapshot&{error?:string};
     if(!response.ok)throw new RequestError(response.status,json.error??'자료를 불러오지 못했습니다.');
+    if(!dateInitialized.current){setDate(defaultSchoolDate(json.state.days));dateInitialized.current=true;}
     setSnapshot(json);setLoadError('');return json as Snapshot;
   },[request]);
   useEffect(()=>{load().catch(e=>setLoadError(e.message));},[load]);

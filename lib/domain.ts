@@ -1,4 +1,4 @@
-import type {Assignment,AttendanceRecord,AttendanceStatus,Participant,Room,SchoolState,Student} from './types';
+import type {Assignment,AttendanceRecord,AttendanceStatus,Participant,Room,SchoolDay,SchoolState,Student} from './types';
 
 export const STATUS = {
   present:{label:'출석',short:'출석',tone:'present'},late:{label:'지각',short:'지각',tone:'late'},
@@ -12,6 +12,13 @@ export const slotKey=(date:string,room:Room,period:number)=>`${date}-${room}-${p
 export const roomLabel=(room:Room)=>room===1?'A반':'B반';
 export function schoolDate(date:string,long=false){
   const [,m,d]=date.split('-').map(Number);return long?`${m}월 ${d}일`:`${m}/${d}`;
+}
+export function defaultSchoolDate(days:SchoolDay[],now=new Date()):string{
+  const parts=new Intl.DateTimeFormat('en',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
+  const part=(type:string)=>parts.find(p=>p.type===type)!.value;
+  const today=`${part('year')}-${part('month')}-${part('day')}`;
+  const dates=days.map(d=>d.date).sort();
+  return dates.find(date=>date>=today)??dates.at(-1)??'2026-11-30';
 }
 export function dayParticipants(state:SchoolState,date:string):Participant[]{
   const active:Participant[]=[...state.participants.filter(p=>p.date===date),...(state.additionalParticipants??[]).filter(p=>p.date===date).map(p=>({studentId:p.studentId,date:p.date,room:p.room,startPeriod:p.startPeriod,leavePeriod:p.endPeriod+1}))];
