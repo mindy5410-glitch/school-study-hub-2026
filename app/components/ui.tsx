@@ -44,17 +44,17 @@ export function CalendarGrid({days,month,onMonth,selectedDates,onSelect,multiple
     })}</tr>)}</tbody></table>
   </div>;
 }
-export function DatePicker({days,date,onChange}:{days:SchoolDay[];date:string;onChange:(date:string)=>void}){
+export function DatePicker({days,date,onChange,disabled=false}:{days:SchoolDay[];date:string;onChange:(date:string)=>void;disabled?:boolean}){
   const selectedDateId=useId();
   const [open,setOpen]=useState(false),[month,setMonth]=useState(date.slice(0,7));
   const i=days.findIndex(d=>d.date===date),selected=days[i];
   return <>
-    <div className="date-picker"><button className="icon-button" aria-label="이전 운영일" disabled={i<=0} onClick={()=>onChange(days[i-1].date)}><ChevronLeft size={17}/></button>
-      <button className="date-trigger" aria-label="운영 날짜 선택" aria-describedby={selectedDateId} aria-haspopup="dialog" aria-expanded={open} disabled={!days.length} onClick={()=>{setMonth((selected??days[0]).date.slice(0,7));setOpen(true);}}><Calendar size={17} aria-hidden="true"/><span id={selectedDateId}>{selected?`${schoolDate(date,true)} (${selected.weekday})`:'날짜 선택'}</span></button>
-      <button className="icon-button" aria-label="다음 운영일" disabled={i<0||i>=days.length-1} onClick={()=>onChange(days[i+1].date)}><ChevronRight size={17}/></button>
+    <div className="date-picker"><button className="icon-button" aria-label="이전 운영일" disabled={disabled||i<=0} onClick={()=>onChange(days[i-1].date)}><ChevronLeft size={17}/></button>
+      <button className="date-trigger" aria-label="운영 날짜 선택" aria-describedby={selectedDateId} aria-haspopup="dialog" aria-expanded={open} disabled={disabled||!days.length} onClick={()=>{setMonth((selected??days[0]).date.slice(0,7));setOpen(true);}}><Calendar size={17} aria-hidden="true"/><span id={selectedDateId}>{selected?`${schoolDate(date,true)} (${selected.weekday})`:'날짜 선택'}</span></button>
+      <button className="icon-button" aria-label="다음 운영일" disabled={disabled||i<0||i>=days.length-1} onClick={()=>onChange(days[i+1].date)}><ChevronRight size={17}/></button>
     </div>
     {open&&createPortal(<Modal title="운영 날짜 선택" className="calendar-modal" onClose={()=>setOpen(false)}>
-      <CalendarGrid days={days} month={month} onMonth={setMonth} selectedDates={[date]} onSelect={next=>{setOpen(false);onChange(next);}}/>
+      <CalendarGrid days={days} month={month} onMonth={setMonth} selectedDates={[date]} disabled={disabled} onSelect={next=>{if(disabled)return;setOpen(false);onChange(next);}}/>
     </Modal>,document.body)}
   </>;
 }

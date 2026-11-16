@@ -350,3 +350,75 @@ tbody tr:hover{background:#f1f5fc}
 .calendar-day.calendar-conflict{background:#fff1f0;color:var(--danger);border-color:var(--danger)}
 @media(max-width:760px){.student-add-layout{grid-template-columns:minmax(0,1fr);gap:24px}.student-add-modal .student-picker-list{max-height:150px}.student-add-dates{border-top:1px solid var(--line);padding-top:20px}.student-date-selection{max-height:90px}}
 @media(max-width:600px){.date-trigger{font-size:16px}.modal.calendar-modal{padding:22px 16px}.calendar-month{margin-bottom:12px}.calendar-month h3{font-size:19px}.date-calendar{border-spacing:2px}.date-calendar thead th{font-size:14px}.calendar-day{font-size:16px}}
+
+.coverage-warning{display:flex;align-items:center;gap:12px;padding:16px 0;margin-bottom:18px;border-block:1px solid #eed7a0;color:#805500;flex-wrap:wrap;font-size:16px}
+.coverage-warning>.button{margin-left:auto}
+.duty-cell.unassigned-duty{border:1px dashed #b97d14;background:#fff8e7;color:#805500}
+.duty-cell.unassigned-duty small{color:#805500}
+.duty-cell.empty-duty{color:var(--muted)}
+.period-tabs button{flex-direction:column;gap:3px}
+.period-tabs button .period-progress{display:block;font-size:12px;line-height:1.25;font-weight:400;color:var(--muted)}
+.period-tabs button .period-progress.complete{color:#12633b;font-weight:600}
+.period-tabs button.selected .period-progress{color:#fff}
+.table-caption .attendance-total b{font-size:inherit;font-weight:600}
+.attendance-table{table-layout:fixed;min-width:840px}
+.attendance-table thead th:nth-child(3){width:142px}
+.attendance-table thead th:nth-child(4){width:160px}
+.attendance-table thead th:nth-child(5){width:160px}
+.attendance-table .student-name>span{display:block}
+.mobile-student-origin{display:none}
+.attendance-table .added-label{margin:4px 5px 0 0}
+.attendance-table .cancelled-label{color:var(--muted);background:#eef2f6}
+.record-save-state{display:block;font-size:12px;color:#58616a;margin-top:2px;line-height:1.3}
+.record-save-state.pending{color:#805500}
+.service-utilities button:disabled,.service-navigation button:disabled{color:#8a949e;cursor:wait}
+.date-trigger:disabled{background:#f2f4f6;color:#8a949e}
+.roster-manager-search{margin-bottom:20px}
+.roster-manager-search input{width:100%;min-width:0}
+.roster-manager-scroll{max-height:48dvh;overflow:auto;border-block:1px solid var(--line)}
+.roster-manager-table{min-width:620px}
+.roster-manager-table th,.roster-manager-table td{padding:11px 8px;font-size:15px}
+.roster-manager-table th:first-child{width:76px}
+.roster-manager-table small{display:block;font-size:13px;color:var(--muted);margin-top:3px}
+.roster-manager-table strong{font-weight:600}
+.roster-row-actions{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.roster-row-actions .button{font-size:13px;min-height:38px;padding:7px 8px}
+.roster-edit-form,.roster-cancel-confirm{padding-block:18px;margin-bottom:20px;border-block:1px solid var(--line)}
+.roster-edit-form h3,.roster-cancel-confirm h3{font-size:18px;font-weight:700;margin-bottom:14px}
+.roster-range-fields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.roster-range-fields .field{margin-bottom:0}
+.roster-range-fields select{min-width:0}
+.roster-manage-note,.roster-cancel-confirm p{font-size:15px;line-height:1.7;color:var(--muted);margin-top:12px}
+@media(max-width:760px){
+  .attendance-table{min-width:610px}
+  .attendance-table thead th:nth-child(-n+2),.attendance-table tbody td:nth-child(-n+2){display:none}
+  .attendance-table thead th:nth-child(3){width:112px}
+  .attendance-table thead th:nth-child(4){width:132px}
+  .attendance-table thead th:nth-child(5){width:158px}
+  .attendance-table .student-name,.attendance-table thead .student-column{position:sticky;left:0;z-index:2;background:#fff;border-right:1px solid var(--line)}
+  .attendance-table thead .student-column{z-index:6;background:#eef2f6}
+  .attendance-table .student-name{padding:12px 9px;white-space:normal;font-size:16px}
+  .attendance-table .mobile-student-origin{display:block;font-size:12px;font-weight:400;color:var(--muted);margin-top:4px;white-space:nowrap}
+  .attendance-table .attendance-switch{min-width:110px;padding:6px;gap:7px;font-size:16px}
+  .attendance-table tbody td{padding:12px 6px}
+  .attendance-table .draft-row .student-name{background:#fff9e8}
+  .period-tabs button{min-height:58px}
+}
+@media(max-width:480px){
+  .coverage-warning{font-size:15px;gap:9px}.coverage-warning>.button{margin-left:28px}
+  .period-tabs button{min-width:48px;padding:8px 6px}
+  .save-bar strong{font-size:15px}
+  .roster-range-fields{gap:8px}.roster-range-fields .field>span{font-size:14px}.roster-range-fields select{padding:10px 7px}
+  .table-caption .toolbar-right .search-box{flex-basis:100%}
+}
+@media(max-width:600px){
+  .roster-manager-table{display:block;min-width:0}
+  .roster-manager-table thead{display:none}
+  .roster-manager-table tbody{display:block}
+  .roster-manager-table tbody tr{display:grid;grid-template-columns:64px minmax(0,1fr) 70px;border-bottom:1px solid var(--line);padding:8px 0}
+  .roster-manager-table tbody tr:last-child{border-bottom:0}
+  .roster-manager-table tbody th,.roster-manager-table tbody td{width:auto;border:0;padding:6px 3px;font-size:14px;min-width:0}
+  .roster-manager-table tbody td:last-child{grid-column:1/-1}
+  .roster-row-actions{justify-content:stretch;gap:6px}
+  .roster-row-actions .button{flex:1;min-height:40px;padding:7px 6px;white-space:nowrap}
+}

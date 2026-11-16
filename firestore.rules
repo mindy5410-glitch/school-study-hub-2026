@@ -7,14 +7,27 @@ service cloud.firestore {
     //   studentIds contains the 315 master pupil IDs with literal true values.
     // school/live: revision (int), updatedAt (timestamp), updatedBy (uid), lastLog.
     // school/schedule: slot->teacher and teacher->count maps, revision, edit stamp.
+    // school/extraSchedule: at most 140 added slot assignments, all 13 teacher
+    //   counts, revision, updatedAt, updatedBy, actorName. Incremental coverage
+    //   uses canonical weekday availability and combined original/extra quotas.
     // attendance/{date|studentId|period}: one typed record per student/period.
     //   'unrecorded' is a reversible tombstone; client deletion is forbidden.
+    //   Modern records add previousStatus/previousNote captured from the actual
+    //   pre-write resource. These are not supplied by a trusted client claim.
+    // attendancePeriods/{date|room|period}: date, room, period, revision, count,
+    //   firstStudentId, undoable, action, updatedAt, updatedBy, actorName.
+    //   Every modern record matches this marker. Its first record is checked;
+    //   count is bounded metadata, not proof that every record was committed.
+    //   Clients expose undo only with complete matching raw-record metadata.
     // dailyRosters/{date}: additional pupils for one existing school date.
     //   Exact top-level fields are date, students, revision, updatedAt,
     //   updatedBy, actorName, lastStudentId, lastAction. students holds at most
     //   315 entries of {room:int, startPeriod:int, endPeriod:int,
     //   addedRevision:int}; one key is added/removed per atomic transaction.
-    //   Removal is immediate undo only, while the added revision is still head.
+    //   Legacy remove is immediate undo only. Managed update/cancel preserves
+    //   saved attendance; any attendance resource/tombstone locks its room.
+    //   Re-add checks existing rooms on Nov30/Dec1, the only two-room dates.
+    //   The roster and history split the proof to fit 20-date atomic adds.
     // history kind roster-batch adds an entries map (date -> "room:start:end").
     //   Every written roster validates its own manifest entry; the log checks
     //   one anchor roster to keep a 20-date transaction below document limits.
@@ -51,6 +64,18 @@ service cloud.firestore {
     function head() { return get(/databases/$(database)/documents/school/live).data; }
     function nextHead() { return getAfter(/databases/$(database)/documents/school/live).data; }
     function nextLog() { return getAfter(/databases/$(database)/documents/history/$(nextHead().lastLog)).data; }
+    function extras() {
+      return exists(/databases/$(database)/documents/school/extraSchedule)
+        ? get(/databases/$(database)/documents/school/extraSchedule).data
+        : {'assignments':{},'counts':{}};
+    }
+    function periodId(date,room,period) { return date+'|'+string(room)+'|'+string(period); }
+    function periodBefore(date,room,period) {
+      return get(/databases/$(database)/documents/attendancePeriods/$(periodId(date,room,period))).data;
+    }
+    function periodAfter(date,room,period) {
+      return getAfter(/databases/$(database)/documents/attendancePeriods/$(periodId(date,room,period))).data;
+    }
     function fields(d, keys) { return d is map && d.keys().hasOnly(keys) && d.keys().hasAll(keys); }
     function text(s, min, max) { return s is string && s.size() >= min && s.size() <= max; }
     function stamp(time, uid) { return time is timestamp && time == request.time && text(uid,1,128) && uid == request.auth.uid; }
@@ -113,13 +138,21 @@ service cloud.firestore {
     function validSlot(id, assignments) {
       let teacher=assignments.get(id,'');
       let parallel=config().parallels.get(id,'');
+      let slot=config().slots.get(id,{});
+      let extraParallel=slot.date+'-'+string(3-slot.room)+'-'+string(slot.period);
       return text(id,1,40) && text(teacher,1,80)
         && config().allowed.get(id,{}).get(teacher,false) == true
-        && (parallel == '' || assignments.get(parallel,'') != teacher);
+        && (parallel == '' || assignments.get(parallel,'') != teacher)
+        && extras().assignments.get(extraParallel,'') != teacher;
+    }
+    function combinedCount(teacher,counts,extraCounts) {
+      let extra=extraCounts.get(teacher,0);
+      return counts[teacher] is int && extra is int && counts[teacher] >= 0 && extra >= 0
+        && counts[teacher]+extra >= config().limits[teacher].min
+        && counts[teacher]+extra <= config().limits[teacher].max;
     }
     function boundedCount(teacher,counts) {
-      return counts[teacher] is int && counts[teacher] >= config().limits[teacher].min
-        && counts[teacher] <= config().limits[teacher].max;
+      return combinedCount(teacher,counts,extras().counts);
     }
     function oneChange(d,o,log) {
       let id=log.assignmentId;
@@ -148,17 +181,150 @@ service cloud.firestore {
         && sameKeys(d.assignments,resource.data.assignments) && sameKeys(d.counts,resource.data.counts)
         && (oneChange(d,resource.data,log) || swapped(d,resource.data,log));
     }
-    function validAttendance(d,id) {
+    function canonicalDate(date) {
+      return {
+        '2026-11-30':'2026-11-30','2026-12-01':'2026-12-01',
+        '2026-12-02':'2026-12-02','2026-12-03':'2026-12-03','2026-12-04':'2026-12-04',
+        '2026-12-07':'2026-11-30','2026-12-08':'2026-12-01',
+        '2026-12-09':'2026-12-02','2026-12-10':'2026-12-03',
+        '2026-12-14':'2026-11-30','2026-12-15':'2026-12-01',
+        '2026-12-16':'2026-12-02','2026-12-17':'2026-12-03','2026-12-18':'2026-12-04',
+        '2026-12-21':'2026-11-30','2026-12-22':'2026-12-01',
+        '2026-12-23':'2026-12-02','2026-12-24':'2026-12-03',
+        '2026-12-28':'2026-11-30','2026-12-29':'2026-12-01'
+      }.get(date,'');
+    }
+    function validCoverageSlot(log,assignments) {
+      let teacher=log.toTeacher;
+      let id=log.date+'-'+string(log.room)+'-'+string(log.period);
+      let parallel=log.date+'-'+string(3-log.room)+'-'+string(log.period);
+      let original=get(/databases/$(database)/documents/school/schedule).data;
+      return validPeriod(log.date,log.room,log.period) && log.assignmentId == id
+        && !config().slots.keys().hasAny([id])
+        && (teacher == ''
+          || (config().allowed.get(canonicalDate(log.date)+'-1-'+string(log.period),{}).get(teacher,false) == true
+            && original.assignments.get(parallel,'') != teacher
+            && assignments.get(parallel,'') != teacher));
+    }
+    function validExtraCounts(counts) {
+      let values=counts.values();
+      return values[0] is int && values[0] >= 0
+        && values[1] is int && values[1] >= 0
+        && values[2] is int && values[2] >= 0
+        && values[3] is int && values[3] >= 0
+        && values[4] is int && values[4] >= 0
+        && values[5] is int && values[5] >= 0
+        && values[6] is int && values[6] >= 0
+        && values[7] is int && values[7] >= 0
+        && values[8] is int && values[8] >= 0
+        && values[9] is int && values[9] >= 0
+        && values[10] is int && values[10] >= 0
+        && values[11] is int && values[11] >= 0
+        && values[12] is int && values[12] >= 0;
+    }
+    function validExtraShape(d) {
       let log=nextLog();
+      return fields(d,['assignments','counts','revision','updatedAt','updatedBy','actorName'])
+        && d.assignments is map && d.assignments.size() <= 140
+        && d.counts is map && d.counts.size() == 13
+        // The mandatory history event validates these values once. Exact
+        // coupling preserves typed identity/revision/time with less repetition.
+        && d.revision is int && d.revision == log.revision && d.updatedAt == log.createdAt
+        && d.updatedBy == log.actorUid && d.actorName == log.actorName;
+    }
+    function validCoverageChange(d,oldAssignments) {
+      let log=nextLog();
+      let id=log.assignmentId;
+      let from=oldAssignments.get(id,'');
+      let to=d.assignments.get(id,'');
+      return log.kind == 'coverage' && log.swapId == '' && from != to
+        && log.fromTeacher == from && log.toTeacher == to
+        && (to == '' ? !d.assignments.keys().hasAny([id]) : text(to,1,80))
+        && d.assignments.diff(oldAssignments).affectedKeys().size() == 1
+        && d.assignments.diff(oldAssignments).affectedKeys().hasOnly([id])
+        && validCoverageSlot(log,d.assignments);
+    }
+    function validExtraCreate(d) {
+      let log=nextLog();
+      let to=log.toTeacher;
+      let original=get(/databases/$(database)/documents/school/schedule).data;
+      return validExtraShape(d) && validExtraCounts(d.counts) && validCoverageChange(d,{}) && text(to,1,80)
+        && d.counts.keys().hasOnly(config().teacherNames.keys())
+        && d.counts.get(to,0) == 1 && d.counts.values().removeAll([0]) == [1]
+        && combinedCount(to,original.counts,d.counts);
+    }
+    function validExtraUpdate(d) {
+      let log=nextLog();
+      let from=log.fromTeacher;
+      let to=log.toTeacher;
+      let old=resource.data;
+      let original=get(/databases/$(database)/documents/school/schedule).data;
+      return validExtraShape(d) && validExtraCounts(d.counts) && validCoverageChange(d,old.assignments)
+        && sameKeys(d.counts,old.counts) && d.counts.diff(old.counts).affectedKeys().hasOnly([from,to])
+        && (from == '' || (d.counts[from] == old.counts[from]-1 && combinedCount(from,original.counts,d.counts)))
+        && (to == '' || (d.counts[to] == old.counts[to]+1 && combinedCount(to,original.counts,d.counts)));
+    }
+    function attendanceStatus(status) {
+      return status is string && status in ['present','late','early','absent','experience','unrecorded'];
+    }
+    function attendanceScope(d,other) {
+      return other.date == d.date && other.room == d.room && other.period == d.period;
+    }
+    function capturedPrevious(d,old) {
+      return attendanceStatus(d.previousStatus) && text(d.previousNote,0,300)
+        && d.previousStatus == old.get('status','unrecorded') && d.previousNote == old.get('note','');
+    }
+    function modernAttendance(d,old,log) {
+      let marker=periodAfter(d.date,d.room,d.period);
+      return fields(d,['studentId','date','period','room','status','note','updatedAt','updatedBy','actorName','revision','previousStatus','previousNote'])
+        && capturedPrevious(d,old) && marker.revision == d.revision
+        && attendanceScope(d,marker) && marker.action == log.action
+        && marker.updatedBy == d.updatedBy && marker.updatedAt == d.updatedAt && marker.actorName == d.actorName
+        && ((log.action == 'save' && marker.undoable == true)
+          || (log.action == 'reset' && marker.undoable == true && d.status == 'unrecorded')
+          || (log.action == 'undo' && marker.undoable == false && restorePrevious(d,old)));
+    }
+    function restorePrevious(d,old) {
+      let marker=periodBefore(d.date,d.room,d.period);
+      return marker.undoable == true && old.get('revision',0) == marker.revision
+        && d.status == old.previousStatus && d.note == old.previousNote;
+    }
+    function legacyAttendance(d,log) {
       return fields(d,['studentId','date','period','room','status','note','updatedAt','updatedBy','actorName','revision'])
-        && text(d.studentId,1,10) && validPeriod(d.date,d.room,d.period)
+        && !log.keys().hasAny(['action'])
+        && !exists(/databases/$(database)/documents/attendancePeriods/$(periodId(d.date,d.room,d.period)));
+    }
+    function validAttendance(d,id,old) {
+      let log=nextLog();
+      return text(d.studentId,1,10) && validPeriod(d.date,d.room,d.period)
         && id == d.date+'|'+d.studentId+'|'+string(d.period)
+        && (old.size() == 0 || (old.studentId == d.studentId && attendanceScope(d,old)))
         && (config().groups.get(d.date+'-'+string(d.room),{}).get(d.studentId,false) == true
+          || (old.size() > 0 && old.room == d.room)
           || additionalStudent(d.date,d.room,d.studentId))
-        && d.status is string && d.status in ['present','late','early','absent','experience','unrecorded']
+        && attendanceStatus(d.status)
         && text(d.note,0,300) && (d.status != 'unrecorded' || d.note == '')
         && stamp(d.updatedAt,d.updatedBy) && actor(d.actorName) && inBatch(d.revision)
-        && log.kind == 'attendance' && log.date == d.date && log.room == d.room && log.period == d.period;
+        && log.kind == 'attendance' && attendanceScope(d,log)
+        && (legacyAttendance(d,log) || modernAttendance(d,old,log));
+    }
+    function validPeriodMarker(d,id,old) {
+      let log=nextLog();
+      let recordId=d.date+'|'+d.firstStudentId+'|'+string(d.period);
+      let record=getAfter(/databases/$(database)/documents/attendance/$(recordId)).data;
+      return fields(d,['date','room','period','revision','count','firstStudentId','undoable','action','updatedAt','updatedBy','actorName'])
+        && validPeriod(d.date,d.room,d.period) && id == periodId(d.date,d.room,d.period)
+        && d.count is int && d.count >= 1 && d.count <= 100 && text(d.firstStudentId,1,10)
+        && d.undoable is bool && d.action in ['save','reset','undo']
+        && inBatch(d.revision) && stamp(d.updatedAt,d.updatedBy) && actor(d.actorName)
+        && log.kind == 'attendance' && attendanceScope(d,log) && log.action == d.action
+        && log.firstStudentId == d.firstStudentId && log.actorName == d.actorName
+        && record.revision == d.revision && attendanceScope(d,record)
+        && record.updatedAt == d.updatedAt && record.updatedBy == d.updatedBy
+        && record.actorName == d.actorName && attendanceStatus(record.previousStatus) && text(record.previousNote,0,300)
+        && ((d.action in ['save','reset'] && d.undoable == true)
+          || (d.action == 'undo' && d.undoable == false && old.get('undoable',false) == true
+            && d.count == old.count && d.firstStudentId == old.firstStudentId));
     }
     function validLogBase(d) {
       return inBatch(d.revision) && text(d.actorUid,1,128) && d.actorUid == request.auth.uid && actor(d.actorName)
@@ -174,19 +340,45 @@ service cloud.firestore {
         && schedule.revision == d.revision && stamp(schedule.updatedAt,schedule.updatedBy)
         && schedule.assignments[d.assignmentId] == d.toTeacher;
     }
+    function validCoverageLog(d) {
+      let schedule=getAfter(/databases/$(database)/documents/school/extraSchedule).data;
+      return fields(d,['revision','kind','date','room','period','assignmentId','fromTeacher','toTeacher','swapId','reason','actorUid','actorName','createdAt'])
+        && d.kind == 'coverage' && validLogBase(d) && text(d.assignmentId,1,40)
+        && text(d.fromTeacher,0,80) && text(d.toTeacher,0,80) && d.swapId == '' && text(d.reason,0,300)
+        && d.assignmentId == d.date+'-'+string(d.room)+'-'+string(d.period)
+        && schedule.revision == d.revision && stamp(schedule.updatedAt,schedule.updatedBy)
+        && schedule.actorName == d.actorName && schedule.assignments.get(d.assignmentId,'') == d.toTeacher;
+    }
     function validAttendanceLog(d) {
       let recordId=d.date+'|'+d.firstStudentId+'|'+string(d.period);
       let record=getAfter(/databases/$(database)/documents/attendance/$(recordId)).data;
+      return d.kind == 'attendance' && validLogBase(d) && text(d.firstStudentId,1,10)
+        && record.revision == d.revision && record.updatedBy == request.auth.uid && record.updatedAt == request.time
+        && attendanceScope(d,record) && record.actorName == d.actorName
+        && (legacyAttendanceLog(d) || modernAttendanceLog(d));
+    }
+    function legacyAttendanceLog(d) {
       return fields(d,['revision','kind','date','room','period','firstStudentId','actorUid','actorName','createdAt'])
-        && d.kind == 'attendance' && validLogBase(d) && text(d.firstStudentId,1,10)
-        && record.revision == d.revision && record.updatedBy == request.auth.uid && record.updatedAt == request.time;
+        && !exists(/databases/$(database)/documents/attendancePeriods/$(periodId(d.date,d.room,d.period)));
+    }
+    function modernAttendanceLog(d) {
+      let marker=periodAfter(d.date,d.room,d.period);
+      return fields(d,['revision','kind','date','room','period','firstStudentId','action','actorUid','actorName','createdAt'])
+        && d.action in ['save','reset','undo'] && marker.revision == d.revision
+        && attendanceScope(d,marker) && marker.action == d.action
+        && marker.firstStudentId == d.firstStudentId && marker.actorName == d.actorName
+        && stamp(marker.updatedAt,marker.updatedBy);
     }
     function validRosterShape(d,date) {
+      let log=nextLog();
       return fields(d,['date','students','revision','updatedAt','updatedBy','actorName','lastStudentId','lastAction'])
         && text(date,10,10) && d.date == date && config().days.get(date,0) > 0
         && d.students is map && d.students.size() <= 315
-        && text(d.lastStudentId,1,10) && d.lastAction in ['add','remove']
-        && stamp(d.updatedAt,d.updatedBy) && actor(d.actorName) && inBatch(d.revision);
+        && text(d.lastStudentId,1,10) && d.lastAction in ['add','remove','update','cancel']
+        // The required roster history validates revision/identity/time once.
+        // Bind every written roster to that event to leave room for lock reads.
+        && d.revision is int && d.revision == log.revision && d.updatedAt == log.createdAt
+        && d.updatedBy == log.actorUid && d.actorName == log.actorName;
     }
     function validRosterEntry(entry,date) {
       return fields(entry,['room','startPeriod','endPeriod','addedRevision'])
@@ -198,8 +390,6 @@ service cloud.firestore {
     function matchingRosterLog(d,entry) {
       let log=nextLog();
       return log.studentId == d.lastStudentId && log.action == d.lastAction
-        && log.revision == d.revision && log.actorUid == d.updatedBy
-        && log.actorName == d.actorName && log.createdAt == d.updatedAt
         && ((log.kind == 'roster' && log.date == d.date
             && log.room == entry.room && log.period == entry.startPeriod && log.endPeriod == entry.endPeriod)
           || (log.kind == 'roster-batch'
@@ -212,7 +402,25 @@ service cloud.firestore {
         && d.students.keys().hasAll([id]) && d.students.size() == oldStudents.size()+1
         && knownStudent(id) && !plannedStudent(d.date,id)
         && validRosterEntry(entry,d.date) && entry.addedRevision == d.revision
+        && compatibleSavedFirst(d.date,id,string(entry.room))
         && matchingRosterLog(d,entry);
+    }
+    function compatibleSavedRoom(date,id,period,room) {
+      let path=/databases/$(database)/documents/attendance/$(date+'|'+id+'|'+string(period));
+      let saved=get(path);
+      return saved == null || string(saved.data.room) == room;
+    }
+    function compatibleSavedFirst(date,id,room) {
+      return date > '2026-12-01'
+        || (compatibleSavedRoom(date,id,1,room) && compatibleSavedRoom(date,id,2,room)
+          && compatibleSavedRoom(date,id,3,room) && compatibleSavedRoom(date,id,4,room));
+    }
+    function compatibleSavedLast(date,id,room) {
+      // Nov30 has six periods. Skipping its impossible period7 keeps the
+      // complete all20 add at nineteen distinct rule-access snapshots.
+      return date > '2026-12-01'
+        || (compatibleSavedRoom(date,id,5,room) && compatibleSavedRoom(date,id,6,room)
+          && (date == '2026-11-30' || compatibleSavedRoom(date,id,7,room)));
     }
     function rosterUndo(d,oldStudents) {
       let id=d.lastStudentId;
@@ -224,6 +432,31 @@ service cloud.firestore {
         && validRosterEntry(entry,d.date) && entry.addedRevision == head().revision
         && matchingRosterLog(d,entry);
     }
+    function noAttendanceFirst(date,id) {
+      // Split the seven-record room-lock proof with the required history
+      // validator so each write remains below ten document-access calls.
+      return !exists(/databases/$(database)/documents/attendance/$(date+'|'+id+'|1'))
+        && !exists(/databases/$(database)/documents/attendance/$(date+'|'+id+'|2'))
+        && !exists(/databases/$(database)/documents/attendance/$(date+'|'+id+'|3'))
+        && !exists(/databases/$(database)/documents/attendance/$(date+'|'+id+'|4'));
+    }
+    function noAttendanceLast(date,id) {
+      return !exists(/databases/$(database)/documents/attendance/$(date+'|'+id+'|5'))
+        && !exists(/databases/$(database)/documents/attendance/$(date+'|'+id+'|6'))
+        && !exists(/databases/$(database)/documents/attendance/$(date+'|'+id+'|7'));
+    }
+    function rosterManage(d,oldStudents) {
+      let id=d.lastStudentId;
+      let old=oldStudents.get(id,{});
+      let entry=d.students.get(id,{});
+      return d.lastAction in ['update','cancel'] && oldStudents.keys().hasAll([id])
+        && knownStudent(id) && !plannedStudent(d.date,id)
+        && ((d.lastAction == 'update' && d.students.size() == oldStudents.size()
+            && validRosterEntry(entry,d.date) && entry.addedRevision == old.addedRevision
+            && (entry.room == old.room || noAttendanceFirst(d.date,id)) && matchingRosterLog(d,entry))
+          || (d.lastAction == 'cancel' && !d.students.keys().hasAny([id])
+            && d.students.size() == oldStudents.size()-1 && matchingRosterLog(d,old)));
+    }
     function validRosterCreate(d,date) {
       return validRosterShape(d,date) && d.students.size() == 1
         && d.students.keys().hasOnly([d.lastStudentId]) && rosterAdd(d,{});
@@ -232,21 +465,27 @@ service cloud.firestore {
       return validRosterShape(d,date) && d.date == resource.data.date
         && d.students.diff(resource.data.students).affectedKeys().size() == 1
         && d.students.diff(resource.data.students).affectedKeys().hasOnly([d.lastStudentId])
-        && (rosterAdd(d,resource.data.students) || rosterUndo(d,resource.data.students));
+        && (rosterAdd(d,resource.data.students) || rosterUndo(d,resource.data.students)
+          || rosterManage(d,resource.data.students));
     }
     function validRosterLog(d) {
       let roster=getAfter(/databases/$(database)/documents/dailyRosters/$(d.date)).data;
-      let entry=d.action == 'add' ? roster.students.get(d.studentId,{})
+      let old=d.action == 'add' ? {}
         : get(/databases/$(database)/documents/dailyRosters/$(d.date)).data.students.get(d.studentId,{});
+      let entry=d.action in ['add','update'] ? roster.students.get(d.studentId,{}) : old;
       return fields(d,['revision','kind','date','room','period','endPeriod','studentId','action','actorUid','actorName','createdAt'])
         && d.kind == 'roster' && validLogBase(d) && knownStudent(d.studentId)
-        && d.action in ['add','remove'] && d.endPeriod is int
+        && d.action in ['add','remove','update','cancel'] && d.endPeriod is int
         && d.endPeriod >= d.period && d.endPeriod <= config().days.get(d.date,0)
         && roster.revision == d.revision && roster.date == d.date
         && roster.lastStudentId == d.studentId && roster.lastAction == d.action
         && stamp(roster.updatedAt,roster.updatedBy) && roster.actorName == d.actorName
-        && validRosterEntry(entry,d.date) && entry.room == d.room
-        && entry.startPeriod == d.period && entry.endPeriod == d.endPeriod;
+        // Updates are fully typed by the mandatory changed-roster validator.
+        // Avoid re-evaluating it here alongside the remaining room-lock reads.
+        && (d.action == 'update' || validRosterEntry(entry,d.date)) && entry.room == d.room
+        && entry.startPeriod == d.period && entry.endPeriod == d.endPeriod
+        && (d.action != 'add' || compatibleSavedLast(d.date,d.studentId,string(entry.room)))
+        && (d.action != 'update' || entry.room == old.room || noAttendanceLast(d.date,d.studentId));
     }
     function rangeCode(room,start,end) {
       return string(room)+':'+string(start)+':'+string(end);
@@ -276,7 +515,14 @@ service cloud.firestore {
         && roster.lastStudentId == d.studentId && roster.lastAction == d.action
         && stamp(roster.updatedAt,roster.updatedBy) && roster.actorName == d.actorName
         && validBatchEntries(d.entries)
-        && d.entries.get(d.date,'') == rangeCode(d.room,d.period,d.endPeriod);
+        && d.entries.get(d.date,'') == rangeCode(d.room,d.period,d.endPeriod)
+        && (d.action != 'add' || compatibleBatchSavedRooms(d));
+    }
+    function compatibleBatchSavedRooms(d) {
+      return (!d.entries.keys().hasAny(['2026-11-30'])
+          || compatibleSavedLast('2026-11-30',d.studentId,d.entries['2026-11-30'].split(':')[0]))
+        && (!d.entries.keys().hasAny(['2026-12-01'])
+          || compatibleSavedLast('2026-12-01',d.studentId,d.entries['2026-12-01'].split(':')[0]));
     }
     function validSharedGate(d) {
       return fields(d,['enabled','validAfter','updatedAt','updatedBy'])
@@ -302,9 +548,22 @@ service cloud.firestore {
       allow update: if member() && validScheduleUpdate(request.resource.data);
       allow delete: if false;
     }
+    match /school/extraSchedule {
+      allow read: if member();
+      allow create: if member() && validExtraCreate(request.resource.data);
+      allow update: if member() && validExtraUpdate(request.resource.data);
+      allow delete: if false;
+    }
     match /attendance/{id} {
       allow read: if member();
-      allow create,update: if member() && validAttendance(request.resource.data,id);
+      allow create: if member() && validAttendance(request.resource.data,id,{});
+      allow update: if member() && validAttendance(request.resource.data,id,resource.data);
+      allow delete: if false;
+    }
+    match /attendancePeriods/{id} {
+      allow read: if member();
+      allow create: if member() && validPeriodMarker(request.resource.data,id,{});
+      allow update: if member() && validPeriodMarker(request.resource.data,id,resource.data);
       allow delete: if false;
     }
     match /dailyRosters/{date} {
@@ -317,6 +576,7 @@ service cloud.firestore {
       allow read: if member();
       allow create: if member() && id == nextHead().lastLog
         && ((request.resource.data.kind == 'schedule' && validScheduleLog(request.resource.data))
+          || (request.resource.data.kind == 'coverage' && validCoverageLog(request.resource.data))
           || (request.resource.data.kind == 'attendance' && validAttendanceLog(request.resource.data))
           || (request.resource.data.kind == 'roster' && validRosterLog(request.resource.data))
           || (request.resource.data.kind == 'roster-batch' && validRosterBatchLog(request.resource.data)));

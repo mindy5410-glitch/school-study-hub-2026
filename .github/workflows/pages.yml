@@ -31,6 +31,10 @@ jobs:
       - run: npm test
       - name: Verify permissions and concurrent editing with fictional records
         run: npx --yes firebase-tools@15.36.0 emulators:exec --project demo-school-hub --only firestore --config firebase.emulator.json "node scripts/test-shared.mjs"
+      - name: Verify undo, roster lifecycle and added duty permissions
+        run: npx --yes firebase-tools@15.36.0 emulators:exec --project demo-school-hub --only firestore --config firebase.emulator.json "node scripts/test-rules-six.mjs"
+        env:
+          RULES_TEST_PORT: 8180
       - run: npm run build
       - uses: actions/upload-pages-artifact@v4
         with:

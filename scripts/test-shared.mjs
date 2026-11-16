@@ -23,7 +23,8 @@ const {watchWorkspaceAccess}=await load('teacher-access');
 globalThis.window={dispatchEvent(){}};
 setLogLevel('silent');
 const rules=(await fs.readFile('rules/school.rules.template','utf8')).replaceAll('__OWNER_UID__','owner-test').replaceAll('__SHARED_UID__','shared-test');
-const env=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:8180,rules}});
+const emulatorPort=Number(process.env.FIRESTORE_EMULATOR_HOST?.split(':').pop()??8180);
+const env=await initializeTestEnvironment({projectId,firestore:{host:'127.0.0.1',port:emulatorPort,rules}});
 const token=email=>({email,email_verified:true,firebase:{sign_in_provider:'google.com'}});
 const owner=env.authenticatedContext('owner-test',token('owner@example.test')).firestore();
 const passwordToken={email:'shared@example.test',email_verified:false,auth_time:100,firebase:{sign_in_provider:'password'}};
@@ -243,6 +244,59 @@ try{
     for(const entries of [{...valid,'2026-12-17':'1:0:6'},{...valid,'2026-12-17':'2:1:6'},{...valid,'2026-12-11':'1:1:6'},{...valid,'2026-12-17':{room:1,startPeriod:1,endPeriod:6}}])await assertFails(rawRosterBatch(id,batchDays,{log:{entries}}));
     await assertFails(rawRosterBatch(id,batchDays,{log:{actorName:'공용 접속'}}));await assertFails(rawRosterBatch(id,batchDays,{document:{isAdmin:true}}));
     assert.equal((await read(owner,'school/live')).revision,s.revision);for(const e of batchDays)assert.ok(!(await read(owner,`dailyRosters/${e.date}`)).students[id]);
+  });
+  await ok('added ranges change duty counts and missing coverage can be filled incrementally',async()=>{
+    let s=await snapshot(second);const date='2026-12-18',studentId=newPupils[6].id,beforeCount=domain.expectedCount(s.state,date,1,2),beforeThird=domain.expectedCount(s.state,date,1,3);
+    let r=await post(second,{kind:'roster',action:'add',date,room:1,studentId,startPeriod:3,endPeriod:4,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    for(const client of [first,second]){const n=client.snapshot().state;assert.equal(domain.expectedCount(n,date,1,2),beforeCount);assert.equal(domain.expectedCount(n,date,1,3),beforeThird+1);assert.ok(domain.missingDuties(n).some(x=>x.date===date&&x.period===3));}
+    const teacherId=s.state.teachers.find(t=>!domain.scheduleErrors(s.state,[...s.state.assignments,{id:`${date}-1-3`,date,room:1,period:3,teacherId:t.id,extra:true}],{requireCoverage:false}).length)?.id;assert.ok(teacherId);
+    r=await post(second,{kind:'coverage',date,room:1,period:3,teacherId,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    assert.equal(first.snapshot().state.assignments.find(a=>a.id===`${date}-1-3`).extra,true);assert.ok(!domain.missingDuties(s.state).some(x=>x.date===date&&x.period===3));assert.ok(domain.missingDuties(s.state).some(x=>x.date===date&&x.period===4));
+    const original=await read(owner,'school/schedule'),extra=await read(owner,'school/extraSchedule');assert.equal(original.assignments[`${date}-1-3`],undefined);assert.equal(extra.assignments[`${date}-1-3`],teacherId);
+    r=await post(second,{kind:'coverage',date:'2026-12-23',room:1,period:2,teacherId:'teacher06',baseRevision:s.revision});assert.equal(r.status,422,await r.text());
+    r=await post(second,{kind:'coverage',date,room:1,period:4,teacherId:'teacher01',baseRevision:s.revision});assert.equal(r.status,422,await r.text());
+    r=await post(second,{kind:'coverage',date,room:1,period:3,teacherId:'',baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);assert.ok(!first.snapshot().state.assignments.some(a=>a.id===`${date}-1-3`));
+  });
+  await ok('per-period undo survives reload and unrelated revisions, then cannot run twice',async()=>{
+    let s=await snapshot(second);const context={date:'2026-12-01',room:1,period:6},key=domain.periodKey(context.date,1,6),changes=[{studentId:'3-1',status:'present',note:'보존할 메모'},{studentId:'1-1',status:'absent',note:'결석 확인'}];
+    let r=await post(second,{kind:'attendance',action:'save',...context,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();const firstRevision=s.revision;
+    assert.equal(s.attendanceUndo[key].revision,firstRevision);assert.deepEqual(s.attendanceUndo[key].changes.map(c=>c.studentId),['3-1','1-1'],'The non-alphabetical anchor must stay first');
+    r=await post(second,{kind:'attendance',...context,changes:[{studentId:'1-1',status:'present',note:'새 메모'},{studentId:'3-1',status:'absent',note:'변경'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();const undoRevision=s.revision;
+    r=await post(second,{kind:'attendance',date:'2026-12-01',room:1,period:5,changes:[{studentId:'1-1',status:'present',note:'다른 교시'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    const anotherDb=env.authenticatedContext('shared-test',passwordToken).firestore(),reloaded=createSharedClient(anotherDb,{currentUser:teacherUser},teacherUser,'공용 접속',false,()=>{});
+    try{
+      const loaded=await snapshot(reloaded);assert.equal(loaded.attendanceUndo[key].revision,undoRevision);
+      r=await post(reloaded,{kind:'attendance-undo',...context,undoRevision,baseRevision:loaded.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);await waitRevision(second,s.revision);
+      for(const c of changes){const a=domain.getRecord(s.state,c.studentId,context.date,context.period);assert.equal(a.status,c.status);assert.equal(a.note,c.note);}
+      assert.equal(s.attendanceUndo[key],undefined);assert.equal(domain.getRecord(s.state,'1-1',context.date,5).note,'다른 교시');
+      const marker=await read(owner,`attendancePeriods/${key}`);assert.equal(marker.undoable,false);assert.equal(marker.action,'undo');assert.equal(marker.firstStudentId,'1-1');assert.equal(marker.count,2);
+      r=await post(reloaded,{kind:'attendance-undo',...context,undoRevision,baseRevision:s.revision});assert.equal(r.status,409,await r.text());
+    }finally{reloaded.dispose();}
+  });
+  await ok('reset has its own persistent undo and stale same-period undo is rejected',async()=>{
+    let s=await snapshot(first);const context={date:'2026-12-01',room:1,period:6},key=domain.periodKey(context.date,1,6),previous=structuredClone(s.state.attendance);
+    let r=await post(first,{kind:'attendance',action:'reset',...context,changes:attendanceResetChanges(s.state,context.date,1,6),baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();const resetRevision=s.revision;await waitRevision(second,s.revision);assert.equal(s.attendanceUndo[key].revision,resetRevision);
+    r=await post(second,{kind:'attendance-undo',...context,undoRevision:resetRevision,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    for(const id of ['1-1','3-1']){const recordKey=domain.recordKey(context.date,id,6);assert.equal(s.state.attendance[recordKey].status,previous[recordKey].status);assert.equal(s.state.attendance[recordKey].note,previous[recordKey].note);}
+    r=await post(first,{kind:'attendance',...context,changes:[{studentId:'1-1',status:'present',note:'첫 변경'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();const stale=s.revision;
+    r=await post(first,{kind:'attendance',...context,changes:[{studentId:'1-1',status:'absent',note:'최신 변경'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(first,{kind:'attendance-undo',...context,undoRevision:stale,baseRevision:s.revision});assert.equal(r.status,409,await r.text());assert.equal(domain.getRecord(first.snapshot().state,'1-1',context.date,6).note,'최신 변경');await waitRevision(second,s.revision);
+  });
+  await ok('later roster management preserves factual records and forbids room changes after tombstones',async()=>{
+    let s=await snapshot(second);const date='2026-11-30',studentId=newPupils[7].id;
+    let r=await post(second,{kind:'roster',action:'add',date,room:1,studentId,startPeriod:2,endPeriod:4,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(second,{kind:'roster-manage',action:'update',date,studentId,room:2,startPeriod:3,endPeriod:5,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(second,{kind:'attendance',date,room:2,period:3,changes:[{studentId,status:'present',note:'취소 후에도 남는 사실'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(second,{kind:'roster-manage',action:'update',date,studentId,room:1,startPeriod:1,endPeriod:6,baseRevision:s.revision});assert.equal(r.status,422,await r.text());
+    r=await post(second,{kind:'roster-manage',action:'update',date,studentId,room:2,startPeriod:1,endPeriod:4,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(second,{kind:'roster-manage',action:'remove',date,studentId,room:2,startPeriod:1,endPeriod:4,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    for(const client of [first,second]){const n=client.snapshot().state;assert.ok(!n.additionalParticipants.some(p=>p.studentId===studentId&&p.date===date));assert.ok(domain.dayParticipants(n,date).find(p=>p.studentId===studentId).historical);assert.ok(domain.roomRoster(n,date,2,3).some(p=>p.id===studentId));assert.ok(!domain.roomRoster(n,date,2,4).some(p=>p.id===studentId));assert.equal(domain.getRecord(n,studentId,date,3).note,'취소 후에도 남는 사실');}
+    r=await post(second,{kind:'attendance',date,room:2,period:4,changes:[{studentId,status:'present',note:'새 사실 만들기 금지'}],baseRevision:s.revision});assert.equal(r.status,400,await r.text());
+    r=await post(second,{kind:'attendance',date,room:2,period:3,changes:[{studentId,status:null,note:''}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    assert.equal(s.attendanceLocks[`${date}|${studentId}`],2);assert.ok(!domain.dayParticipants(s.state,date).some(p=>p.studentId===studentId));
+    r=await post(second,{kind:'roster',action:'add',date,studentId,room:1,startPeriod:1,endPeriod:6,baseRevision:s.revision});assert.equal(r.status,422,await r.text());
+    r=await post(second,{kind:'roster',action:'add',date,studentId,room:2,startPeriod:1,endPeriod:6,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(second,{kind:'roster-manage',action:'update',date,studentId,room:1,startPeriod:1,endPeriod:6,baseRevision:s.revision});assert.equal(r.status,422,await r.text());await waitRevision(first,s.revision);
   });
   await ok('master and history immutable; orphan writes and record deletes denied',async()=>{
     const h=await read(owner,'school/live');await assertFails(setDoc(doc(owner,'school/live'),{...h,revision:h.revision+1,updatedAt:serverTimestamp()}));
