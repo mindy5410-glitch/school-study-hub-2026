@@ -162,6 +162,14 @@ tbody tr:hover{background:#f1f5fc}
 .status-badge.experience,.mini-status.experience{background:#f0eefa;color:#51429d}
 .status-select{font-size:16px;min-height:46px;min-width:140px;padding:9px 12px;border:1px solid #8a949e;color:#464c53;background:#fff;border-radius:6px}
 .status-select.present{color:#12633b;background:#f0f8f3;border-color:#80b59a}.status-select.late{color:#805500;background:#fff8e9}.status-select.early{color:#0b50d0;background:#f0f5ff}.status-select.absent{color:#a82920;background:#fff3f1}.status-select.experience{color:#51429d;background:#f5f3fc}
+.attendance-switch{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-width:140px;min-height:46px;padding:8px 10px;border:0;border-radius:6px;background:transparent;color:#a82920;font-size:16px;font-weight:600;white-space:nowrap}
+.attendance-switch:hover:not(:disabled){background:#eef2f6}
+.attendance-switch.is-present{color:#0b50d0}
+.attendance-switch-track{position:relative;display:block;flex-shrink:0;width:48px;height:28px;border:1px solid #6d7885;border-radius:99px;background:#6d7885}
+.attendance-switch.is-present .attendance-switch-track{border-color:#0b50d0;background:#0b50d0}
+.attendance-switch-thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transform:translateX(0);transition:transform .15s ease}
+.attendance-switch.is-present .attendance-switch-thumb{transform:translateX(20px)}
+@media(prefers-reduced-motion:reduce){.attendance-switch-thumb{transition:none}}
 .note-input{font-size:16px;min-height:44px;min-width:180px;padding:8px 12px;border:1px solid #cdd1d5;border-radius:6px;background:#fff;color:#333c45}
 .note-input:hover:not(:disabled),.note-input:focus{border-color:#256ef4;background:#fff}
 .note-input::placeholder{color:#79818a}.note-input:disabled{background:#f2f4f6;color:#79818a;opacity:1}
