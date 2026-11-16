@@ -110,7 +110,9 @@ tbody tr:hover{background:#f1f5fc}
 .room-cell small{font-size:13px;color:#58616a;margin-top:6px}
 .duty-cell{font-size:17px;min-height:70px;padding:10px 5px;gap:7px;border-radius:6px;color:#1e2124;font-weight:600;border-color:transparent}
 .duty-cell small{font-size:14px;font-weight:400;color:#58616a;gap:7px}
-.duty-cell small svg{opacity:.6;color:#0b50d0}
+.duty-teacher{display:inline-flex;align-items:center;justify-content:center;gap:6px;max-width:100%;white-space:nowrap}
+.duty-teacher svg{opacity:.75;color:#0b50d0}
+.duty-cell:hover .duty-teacher svg,.duty-cell:focus-visible .duty-teacher svg{opacity:1}
 .duty-cell:hover{background:#e8f0ff;border-color:#729ff3;color:#0b50d0}
 .duty-cell.muted-duty{opacity:.28}
 .duty-table.duty-table-transposed{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
