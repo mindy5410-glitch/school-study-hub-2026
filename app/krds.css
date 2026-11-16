@@ -113,6 +113,22 @@ tbody tr:hover{background:#f1f5fc}
 .duty-cell small svg{opacity:.6;color:#0b50d0}
 .duty-cell:hover{background:#e8f0ff;border-color:#729ff3;color:#0b50d0}
 .duty-cell.muted-duty{opacity:.28}
+.duty-table.duty-table-transposed{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
+.duty-table.duty-table-transposed th{width:auto}
+.duty-table-transposed .duty-period-column{width:84px}
+.duty-table-transposed thead{position:sticky;top:0;z-index:5}
+.duty-table.duty-table-transposed thead th{position:static;left:auto;z-index:auto;background:#eef2f6;padding:8px 5px;border-right:1px solid #d9dde0}
+.duty-table-transposed .duty-date-header strong{display:block;font-size:17px;font-weight:700;color:var(--ink)}
+.duty-table-transposed .duty-date-header>span{display:block;font-size:13px;font-weight:400;color:var(--muted);margin-top:2px}
+.duty-table-transposed .room-tag{font-size:13px;padding:3px 7px}
+.duty-table-transposed .room-cell small{font-size:12px;margin-top:3px}
+.duty-table-transposed .duty-axis{position:sticky;left:0;z-index:3;background:#eef2f6;border-right:1px solid #b1b8be;font-weight:700;font-size:16px;white-space:nowrap}
+.duty-table.duty-table-transposed thead .duty-axis{position:sticky;left:0;z-index:7}
+.duty-table-transposed tbody th.duty-axis{padding:12px 8px}
+.duty-table-transposed td{padding:4px;border-right:1px solid #e6e8ea}
+.duty-table-transposed .duty-cell{min-height:54px;padding:6px 4px;gap:4px;font-size:16px}
+.duty-table-transposed .duty-cell small{font-size:12px}
+.duty-table-transposed .inactive-cell{font-size:13px;padding:16px 0}
 .inactive-cell{font-size:14px;color:#7e8790;padding:18px 0}
 .panel-footnote{padding:16px 24px;background:#f7f8fa;border-top:1px solid #d7dce1;font-size:14px;color:#58616a;gap:9px;line-height:1.6}
 .tiny-dot{background:#58616a;width:4px;height:4px}

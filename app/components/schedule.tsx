@@ -8,17 +8,22 @@ import {DatePicker,EmptyState,Modal} from './ui';
 export interface ScheduleMutation {kind:'schedule';assignmentId:string;teacherId:string;swapId?:string;reason:string;baseRevision:number}
 export function ScheduleView({snapshot,date,onDate,teacher,onTeacher,scope,onScope,onEdit}:{snapshot:Snapshot;date:string;onDate:(date:string)=>void;teacher:string;onTeacher:(id:string)=>void;scope:'all'|'day';onScope:(s:'all'|'day')=>void;onEdit:(a:Assignment)=>void}){
   const {state}=snapshot;const [showEmpty,setShowEmpty]=useState(false);
-  const rows=state.days.flatMap(day=>(day.date<='2026-12-01'?[1,2]:[1]).map(room=>({day,room:room as Room})))
+  const columns=state.days.flatMap(day=>(day.date<='2026-12-01'?[1,2]:[1]).map(room=>({day,room:room as Room})))
     .filter(({day,room})=>(scope==='all'||day.date===date)&&(showEmpty||expectedCount(state,day.date,room,1)>0))
     .filter(({day,room})=>teacher==='all'||state.assignments.some(a=>a.date===day.date&&a.room===room&&a.teacherId===teacher));
+  const dateGroups=state.days.map(day=>({day,count:columns.filter(column=>column.day.date===day.date).length})).filter(group=>group.count>0);
   return <>
     <section className="panel"><div className="panel-toolbar"><div className="segmented"><button className={scope==='all'?'selected':''} onClick={()=>onScope('all')}>전체 기간</button><button className={scope==='day'?'selected':''} onClick={()=>onScope('day')}>선택일</button></div>
       <div className="toolbar-right">{scope==='day'&&<DatePicker days={state.days} date={date} onChange={onDate}/>}<label className="sr-only" htmlFor="teacher-filter">교사별 조회</label><select id="teacher-filter" className="control teacher-filter" value={teacher} onChange={e=>onTeacher(e.target.value)}><option value="all">전체 교사</option>{state.teachers.map(t=><option key={t.id} value={t.id}>{t.name} · {teacherLoad(state,t.id)}교시</option>)}</select></div></div>
       <div className="table-caption"><p><strong>{teacher==='all'?'반별 임장 시간표':`${teacher} 선생님 임장 시간표`}</strong></p><label className="checkbox-label"><input type="checkbox" checked={showEmpty} onChange={e=>setShowEmpty(e.target.checked)}/>미운영일 포함</label></div>
-      {!rows.length?<EmptyState title="해당하는 임장 일정이 없습니다"/>:<div className="table-scroll"><table className="duty-table"><thead><tr><th scope="col">날짜</th><th scope="col">관리반</th>{Array.from({length:7},(_,i)=><th scope="col" key={i}>{i+1}교시</th>)}</tr></thead><tbody>{rows.map(({day,room})=><tr key={`${day.date}-${room}`}><th scope="row" className="date-cell"><strong>{schoolDate(day.date)}</strong><span>{day.weekday}요일</span></th><td className="room-cell"><span className={`room-tag room-${room}`}>기간{room}반</span><small>{room+2}반 교실</small></td>{Array.from({length:7},(_,i)=>{
-        const p=i+1;const a=state.assignments.find(a=>a.date===day.date&&a.room===room&&a.period===p);
-        return <td key={p}>{p>day.periods?<span className="inactive-cell">수업 없음</span>:!a?<span className="inactive-cell">학생 없음</span>:<button className={`duty-cell ${teacher!=='all'&&teacher!==a.teacherId?'muted-duty':''}`} aria-label={`${schoolDate(day.date)} 기간${room}반 ${p}교시 ${a.teacherId} 변경`} onClick={()=>onEdit(a)}><span>{a.teacherId}</span><small>{expectedCount(state,day.date,room,p)}명<Pencil size={12}/></small></button>}</td>;
-      })}</tr>)}</tbody></table></div>}
+      {!columns.length?<EmptyState title="해당하는 임장 일정이 없습니다"/>:<div className="table-scroll duty-grid-scroll" role="region" aria-label="교사 임장 시간표 스크롤 영역" tabIndex={0}><table className="duty-table duty-table-transposed" style={{minWidth:84+columns.length*132}} aria-label="날짜별 교사 임장 시간표">
+        <colgroup><col className="duty-period-column"/></colgroup>{dateGroups.map(({day,count})=><colgroup key={day.date} span={count}/>)}
+        <thead><tr><th scope="col" rowSpan={2} className="duty-axis">교시</th>{dateGroups.map(({day,count})=><th scope="colgroup" colSpan={count} className="duty-date-header" key={day.date}><strong>{schoolDate(day.date)}</strong><span>{day.weekday}요일</span></th>)}</tr><tr>{columns.map(({day,room})=><th scope="col" className="room-cell" key={`${day.date}-${room}`}><span className={`room-tag room-${room}`}>기간{room}반</span><small>{room+2}반 교실</small></th>)}</tr></thead>
+        <tbody>{Array.from({length:7},(_,i)=>{const p=i+1;return <tr key={p}><th scope="row" className="duty-axis">{p}교시</th>{columns.map(({day,room})=>{
+          const a=state.assignments.find(a=>a.date===day.date&&a.room===room&&a.period===p);
+          return <td key={`${day.date}-${room}`}>{p>day.periods?<span className="inactive-cell">수업 없음</span>:!a?<span className="inactive-cell">학생 없음</span>:<button className={`duty-cell ${teacher!=='all'&&teacher!==a.teacherId?'muted-duty':''}`} aria-label={`${schoolDate(day.date)} 기간${room}반 ${p}교시 ${a.teacherId} 변경`} onClick={()=>onEdit(a)}><span>{a.teacherId}</span><small>{expectedCount(state,day.date,room,p)}명<Pencil size={12}/></small></button>}</td>;
+        })}</tr>;})}</tbody>
+      </table></div>}
     </section>
   </>;
 }
