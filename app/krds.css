@@ -1,7 +1,8 @@
 /* KRDS-inspired adaptive styling. School branding; no government identity marks. */
+@font-face{font-family:'Ownglyph Yuntaeng';src:url('https://cdn.jsdelivr.net/gh/Project-Noonnu/2608211801@font-160/font-160/%EC%98%A8%EA%B8%80%EC%9E%8E%20%EC%9C%A4%ED%83%B1%EC%B2%B4.woff2') format('woff2');font-style:normal;font-weight:400;font-display:swap;size-adjust:125%}
 :root{--sidebar-width:0px;--bg:#fff;--surface:#fff;--ink:#1e2124;--muted:#58616a;--line:#cdd1d5;--accent:#256ef4;--accent-dark:#0b50d0;--accent-soft:#ecf2fe;--navy:#052b57;--danger:#b9130b;--shadow:none;--content-width:1280px;--page-gutter:clamp(16px,1.25vw,28px)}
 html{scroll-behavior:smooth;scroll-padding-top:20px}
-body,button,input,select,textarea{font-family:'Pretendard GOV','Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:17px;letter-spacing:0;line-height:1.5}
+body,button,input,select,textarea{font-family:'Ownglyph Yuntaeng','Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:17px;letter-spacing:0;line-height:1.5}
 body{background:#fff;color:var(--ink)}
 button{font-weight:500}button:disabled{opacity:1;color:#8a949e;background:#e6e8ea;border-color:#cdd1d5;cursor:not-allowed}
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #0b50d0;outline-offset:3px}
