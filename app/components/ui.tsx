@@ -1,10 +1,11 @@
 'use client';
-import {useEffect,useRef,type ReactNode} from 'react';
+import {useEffect,useId,useRef,useState,type ReactNode} from 'react';
+import {createPortal} from 'react-dom';
 import {X,Loader2,ChevronLeft,ChevronRight,Calendar} from 'lucide-react';
 import type {SchoolDay,AttendanceStatus} from '../../lib/types';
 import {schoolDate,STATUS} from '../../lib/domain';
 
-export function Modal({title,description,children,onClose,wide=false}:{title:string;description?:string;children:ReactNode;onClose:()=>void;wide?:boolean}){
+export function Modal({title,description,children,onClose,wide=false,className=''}:{title:string;description?:string;children:ReactNode;onClose:()=>void;wide?:boolean;className?:string}){
   const dialog=useRef<HTMLElement>(null);const closeRef=useRef(onClose);closeRef.current=onClose;
   useEffect(()=>{
     const previous=document.activeElement as HTMLElement|null;
@@ -18,17 +19,35 @@ export function Modal({title,description,children,onClose,wide=false}:{title:str
     return()=>{document.removeEventListener('keydown',listener);document.body.style.overflow=old;previous?.focus();};
   },[]);
   return <div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
-    <section ref={dialog} className={`modal ${wide?'wide':''}`} role="dialog" aria-modal="true" aria-label={title}>
+    <section ref={dialog} className={`modal ${wide?'wide':''} ${className}`} role="dialog" aria-modal="true" aria-label={title}>
       <div className="modal-heading"><div><h2>{title}</h2>{description&&<p>{description}</p>}</div><button className="icon-button" aria-label="닫기" onClick={onClose}><X size={20}/></button></div>
       {children}
     </section>
   </div>;
 }
 export function DatePicker({days,date,onChange}:{days:SchoolDay[];date:string;onChange:(date:string)=>void}){
-  const i=days.findIndex(d=>d.date===date);
-  return <div className="date-picker"><button className="icon-button" aria-label="이전 운영일" disabled={i<=0} onClick={()=>onChange(days[i-1].date)}><ChevronLeft size={17}/></button>
-    <Calendar size={16} aria-hidden="true"/><select aria-label="운영 날짜" value={date} onChange={e=>onChange(e.target.value)}>{days.map(d=><option key={d.date} value={d.date}>{schoolDate(d.date,true)} ({d.weekday})</option>)}</select>
-    <button className="icon-button" aria-label="다음 운영일" disabled={i>=days.length-1} onClick={()=>onChange(days[i+1].date)}><ChevronRight size={17}/></button></div>;
+  const selectedDateId=useId();
+  const [open,setOpen]=useState(false),[month,setMonth]=useState(date.slice(0,7));
+  const i=days.findIndex(d=>d.date===date),selected=days[i];
+  const months=[...new Set(days.map(d=>d.date.slice(0,7)))].sort(),monthIndex=months.indexOf(month);
+  const [year,monthNumber]=month.split('-').map(Number);
+  const firstWeekday=new Date(Date.UTC(year,monthNumber-1,1)).getUTCDay();
+  const monthLength=new Date(Date.UTC(year,monthNumber,0)).getUTCDate();
+  const cells=Array.from({length:Math.ceil((firstWeekday+monthLength)/7)*7},(_,index)=>{
+    const number=index-firstWeekday+1;
+    return number<1||number>monthLength?null:{number,date:`${month}-${String(number).padStart(2,'0')}`,weekday:index%7};
+  });
+  const operatingDates=new Set(days.map(d=>d.date)),weekdays=['일','월','화','수','목','금','토'];
+  return <>
+    <div className="date-picker"><button className="icon-button" aria-label="이전 운영일" disabled={i<=0} onClick={()=>onChange(days[i-1].date)}><ChevronLeft size={17}/></button>
+      <button className="date-trigger" aria-label="운영 날짜 선택" aria-describedby={selectedDateId} aria-haspopup="dialog" aria-expanded={open} disabled={!days.length} onClick={()=>{setMonth((selected??days[0]).date.slice(0,7));setOpen(true);}}><Calendar size={17} aria-hidden="true"/><span id={selectedDateId}>{selected?`${schoolDate(date,true)} (${selected.weekday})`:'날짜 선택'}</span></button>
+      <button className="icon-button" aria-label="다음 운영일" disabled={i<0||i>=days.length-1} onClick={()=>onChange(days[i+1].date)}><ChevronRight size={17}/></button>
+    </div>
+    {open&&createPortal(<Modal title="운영 날짜 선택" className="calendar-modal" onClose={()=>setOpen(false)}>
+      <div className="calendar-month"><button className="icon-button bordered" aria-label="이전 달" disabled={monthIndex<=0} onClick={()=>setMonth(months[monthIndex-1])}><ChevronLeft size={20}/></button><h3 aria-live="polite">{year}년 {monthNumber}월</h3><button className="icon-button bordered" aria-label="다음 달" disabled={monthIndex<0||monthIndex>=months.length-1} onClick={()=>setMonth(months[monthIndex+1])}><ChevronRight size={20}/></button></div>
+      <table className="date-calendar" aria-label={`${year}년 ${monthNumber}월 운영일 달력`}><thead><tr>{weekdays.map(day=><th scope="col" key={day}>{day}</th>)}</tr></thead><tbody>{Array.from({length:cells.length/7},(_,row)=><tr key={row}>{cells.slice(row*7,row*7+7).map((cell,column)=><td key={column}>{cell&&<button className={`calendar-day ${cell.date===date?'selected':''}`} aria-label={`${year}년 ${monthNumber}월 ${cell.number}일 ${weekdays[cell.weekday]}요일`} aria-current={cell.date===date?'date':undefined} disabled={!operatingDates.has(cell.date)} title={operatingDates.has(cell.date)?undefined:'운영하지 않는 날'} onClick={()=>{setOpen(false);onChange(cell.date);}}>{cell.number}</button>}</td>)}</tr>)}</tbody></table>
+    </Modal>,document.body)}
+  </>;
 }
 export function StatusBadge({status,planned=false}:{status:AttendanceStatus|null;planned?:boolean}){
   if(!status)return <span className="status-badge unrecorded">미기록</span>;
