@@ -301,7 +301,13 @@ tbody tr:hover{background:#f1f5fc}
 .date-trigger{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;flex:1;border:0;background:#fff;border-radius:5px;padding:3px 6px;font-size:16px;font-weight:500;color:var(--ink);white-space:nowrap}
 .date-trigger:hover:not(:disabled){background:var(--accent-soft)}
 .date-trigger svg{flex-shrink:0}
-.modal.calendar-modal{width:480px}
+.date-popover{position:absolute;z-index:150;padding:12px;border:1px solid #8a949e;border-radius:8px;background:#fff;box-shadow:0 6px 20px #152c4a26}
+.date-popover .calendar-month{gap:8px;margin-bottom:8px}
+.date-popover .calendar-month h3{font-size:18px}
+.date-popover .calendar-month .icon-button{min-width:32px;min-height:32px;padding:5px}
+.date-popover .date-calendar{border-spacing:2px}
+.date-popover .date-calendar thead th{font-size:13px;padding:4px 0 6px}
+.date-popover .calendar-day{min-height:34px;height:34px;aspect-ratio:auto;font-size:15px;border-radius:5px}
 .calendar-month{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
 .calendar-month h3{font-size:21px;font-weight:700;text-align:center}
 .calendar-month .icon-button{min-width:40px;min-height:40px}

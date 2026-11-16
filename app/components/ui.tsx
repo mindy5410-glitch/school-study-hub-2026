@@ -1,5 +1,5 @@
 'use client';
-import {useEffect,useId,useRef,useState,type ReactNode} from 'react';
+import {useEffect,useId,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
 import {createPortal} from 'react-dom';
 import {X,Loader2,ChevronLeft,ChevronRight,Calendar} from 'lucide-react';
 import type {SchoolDay,AttendanceStatus} from '../../lib/types';
@@ -45,17 +45,43 @@ export function CalendarGrid({days,month,onMonth,selectedDates,onSelect,multiple
   </div>;
 }
 export function DatePicker({days,date,onChange,disabled=false}:{days:SchoolDay[];date:string;onChange:(date:string)=>void;disabled?:boolean}){
-  const selectedDateId=useId();
+  const selectedDateId=useId(),popoverId=useId();
+  const anchor=useRef<HTMLDivElement>(null),trigger=useRef<HTMLButtonElement>(null),popover=useRef<HTMLElement>(null);
   const [open,setOpen]=useState(false),[month,setMonth]=useState(date.slice(0,7));
+  const [position,setPosition]=useState({top:0,left:12,width:320});
   const i=days.findIndex(d=>d.date===date),selected=days[i];
+  const place=()=>{
+    if(!anchor.current)return;
+    const rect=anchor.current.getBoundingClientRect(),viewport=document.documentElement.clientWidth;
+    const width=Math.min(320,Math.max(0,viewport-24));
+    const next={top:rect.bottom+window.scrollY+6,left:window.scrollX+Math.max(12,Math.min(rect.left,viewport-width-12)),width};
+    setPosition(previous=>previous.top===next.top&&previous.left===next.left&&previous.width===next.width?previous:next);
+  };
+  useEffect(()=>{if(disabled)setOpen(false);},[disabled]);
+  useLayoutEffect(()=>{
+    if(!open||disabled)return;
+    place();
+    const outside=(event:Event)=>{
+      const target=event.target;
+      if(target instanceof Node&&!anchor.current?.contains(target)&&!popover.current?.contains(target))setOpen(false);
+    };
+    const keydown=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();setOpen(false);trigger.current?.focus({preventScroll:true});}};
+    const observer=new ResizeObserver(place);if(anchor.current)observer.observe(anchor.current);
+    window.addEventListener('resize',place);window.addEventListener('scroll',place,true);
+    document.addEventListener('pointerdown',outside,true);document.addEventListener('focusin',outside);document.addEventListener('keydown',keydown);
+    const current=popover.current?.querySelector<HTMLButtonElement>('[aria-current="date"]')??popover.current?.querySelector<HTMLButtonElement>('button:not(:disabled)');
+    current?.focus();
+    return()=>{observer.disconnect();window.removeEventListener('resize',place);window.removeEventListener('scroll',place,true);document.removeEventListener('pointerdown',outside,true);document.removeEventListener('focusin',outside);document.removeEventListener('keydown',keydown);};
+  },[open,disabled]);
+  const changeDate=(next:string)=>{setOpen(false);onChange(next);};
   return <>
-    <div className="date-picker"><button className="icon-button" aria-label="이전 운영일" disabled={disabled||i<=0} onClick={()=>onChange(days[i-1].date)}><ChevronLeft size={17}/></button>
-      <button className="date-trigger" aria-label="운영 날짜 선택" aria-describedby={selectedDateId} aria-haspopup="dialog" aria-expanded={open} disabled={disabled||!days.length} onClick={()=>{setMonth((selected??days[0]).date.slice(0,7));setOpen(true);}}><Calendar size={17} aria-hidden="true"/><span id={selectedDateId}>{selected?`${schoolDate(date,true)} (${selected.weekday})`:'날짜 선택'}</span></button>
-      <button className="icon-button" aria-label="다음 운영일" disabled={disabled||i<0||i>=days.length-1} onClick={()=>onChange(days[i+1].date)}><ChevronRight size={17}/></button>
+    <div className="date-picker" ref={anchor}><button className="icon-button" aria-label="이전 운영일" disabled={disabled||i<=0} onClick={()=>changeDate(days[i-1].date)}><ChevronLeft size={17}/></button>
+      <button className="date-trigger" ref={trigger} aria-label="운영 날짜 선택" aria-describedby={selectedDateId} aria-controls={open?popoverId:undefined} aria-haspopup="dialog" aria-expanded={open&&!disabled} disabled={disabled||!days.length} onClick={()=>{if(open){setOpen(false);return;}place();setMonth((selected??days[0]).date.slice(0,7));setOpen(true);}}><Calendar size={17} aria-hidden="true"/><span id={selectedDateId}>{selected?`${schoolDate(date,true)} (${selected.weekday})`:'날짜 선택'}</span></button>
+      <button className="icon-button" aria-label="다음 운영일" disabled={disabled||i<0||i>=days.length-1} onClick={()=>changeDate(days[i+1].date)}><ChevronRight size={17}/></button>
     </div>
-    {open&&createPortal(<Modal title="운영 날짜 선택" className="calendar-modal" onClose={()=>setOpen(false)}>
-      <CalendarGrid days={days} month={month} onMonth={setMonth} selectedDates={[date]} disabled={disabled} onSelect={next=>{if(disabled)return;setOpen(false);onChange(next);}}/>
-    </Modal>,document.body)}
+    {open&&!disabled&&createPortal(<section id={popoverId} ref={popover} className="date-popover" role="dialog" aria-label="운영 날짜 선택" style={position}>
+      <CalendarGrid days={days} month={month} onMonth={setMonth} selectedDates={[date]} onSelect={next=>{changeDate(next);trigger.current?.focus({preventScroll:true});}}/>
+    </section>,document.body)}
   </>;
 }
 export function StatusBadge({status,planned=false}:{status:AttendanceStatus|null;planned?:boolean}){
