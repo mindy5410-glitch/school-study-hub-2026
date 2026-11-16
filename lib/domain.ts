@@ -1,4 +1,4 @@
-import type {Assignment,AttendanceRecord,AttendanceStatus,Room,SchoolState,Student} from './types';
+import type {Assignment,AttendanceRecord,AttendanceStatus,Participant,Room,SchoolState,Student} from './types';
 
 export const STATUS = {
   present:{label:'출석',short:'출석',tone:'present'},late:{label:'지각',short:'지각',tone:'late'},
@@ -11,15 +11,18 @@ export const roomLabel=(room:Room)=>`체험학습기간${room}반(${room+2}반)`
 export function schoolDate(date:string,long=false){
   const [,m,d]=date.split('-').map(Number);return long?`${m}월 ${d}일`:`${m}/${d}`;
 }
+export function dayParticipants(state:SchoolState,date:string):Participant[]{
+  return [...state.participants.filter(p=>p.date===date),...(state.additionalParticipants??[]).filter(p=>p.date===date).map(p=>({studentId:p.studentId,date:p.date,room:p.room,startPeriod:p.startPeriod,leavePeriod:p.endPeriod+1}))];
+}
 export function expectedStatus(state:SchoolState,studentId:string,date:string,period:number):'present'|'experience'{
-  const p=state.participants.find(x=>x.studentId===studentId&&x.date===date);
-  return p&&(!p.leavePeriod||period<p.leavePeriod)?'present':'experience';
+  const p=dayParticipants(state,date).find(x=>x.studentId===studentId);
+  return p&&period>=(p.startPeriod??1)&&(!p.leavePeriod||period<p.leavePeriod)?'present':'experience';
 }
 export function getRecord(state:SchoolState,studentId:string,date:string,period:number):AttendanceRecord|undefined{
   return state.attendance[recordKey(date,studentId,period)];
 }
 export function roomRoster(state:SchoolState,date:string,room:Room):Student[]{
-  const ids=new Set(state.participants.filter(p=>p.date===date&&p.room===room).map(p=>p.studentId));
+  const ids=new Set(dayParticipants(state,date).filter(p=>p.room===room).map(p=>p.studentId));
   return state.students.filter(s=>ids.has(s.id)).sort((a,b)=>a.classNo-b.classNo||a.number-b.number);
 }
 export function expectedCount(state:SchoolState,date:string,room:Room,period:number){

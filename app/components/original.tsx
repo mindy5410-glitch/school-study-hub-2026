@@ -1,14 +1,14 @@
 'use client';
 import {Search} from 'lucide-react';
 import type {Room,Snapshot} from '../../lib/types';
-import {expectedStatus,getRecord,STATUS} from '../../lib/domain';
+import {dayParticipants,expectedStatus,getRecord,STATUS} from '../../lib/domain';
 import {DatePicker,EmptyState} from './ui';
 
 export function OriginalView({snapshot,date,onDate,classNo,onClass,search,onSearch,onOpenRecord}:{snapshot:Snapshot;date:string;onDate:(d:string)=>void;classNo:number;onClass:(c:number)=>void;search:string;onSearch:(v:string)=>void;onOpenRecord:(date:string,room:Room,period:number)=>void}){
   const {state}=snapshot,day=state.days.find(d=>d.date===date)!;
   const members=state.students.filter(s=>classNo===0||s.classNo===classNo).sort((a,b)=>a.classNo-b.classNo||a.number-b.number);
   const students=members.filter(s=>`${s.classNo}반 ${s.number}번 ${s.name} ${s.originalName}`.toLowerCase().includes(search.toLowerCase()));
-  const participants=state.participants.filter(p=>p.date===date&&members.some(s=>s.id===p.studentId));
+  const participants=dayParticipants(state,date).filter(p=>members.some(s=>s.id===p.studentId));
   return <>
     <section className="panel"><div className="panel-toolbar"><DatePicker days={state.days} date={date} onChange={onDate}/><label className="field inline"><span>원반 선택</span><select value={classNo} onChange={e=>onClass(Number(e.target.value))}><option value={0}>전체 원반</option>{Array.from({length:13},(_,i)=><option key={i} value={i+1}>원반 {i+1}반</option>)}</select></label><div className="toolbar-right"><label className="search-box"><Search size={16}/><input aria-label="원반 출석부 학생 검색" placeholder="학생 이름 검색" value={search} onChange={e=>onSearch(e.target.value)}/></label></div></div>
       <div className="table-caption"><p><strong>{classNo?`원반 ${classNo}반`:'전체 원반'} 출석부</strong></p></div>

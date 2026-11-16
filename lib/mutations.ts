@@ -14,6 +14,25 @@ export function applyMutation(snapshot:Snapshot,body:Record<string,unknown>,acto
     state.assignments=assignments;
     summary=`${schoolDate(original.date)} 기간${original.room}반 ${original.period}교시 ${original.teacherId} → ${body.teacherId}${body.swapId?' (맞교환)':''}`;
     details={assignmentId:body.assignmentId,previousTeacher:original.teacherId,teacherId:body.teacherId,swapId:body.swapId??null,reason:typeof body.reason==='string'?body.reason.trim().slice(0,300):''};
+  }else if(body.kind==='roster'){
+    const day=state.days.find(d=>d.date===body.date),room=body.room,studentId=body.studentId;
+    const student=state.students.find(s=>s.id===studentId);
+    if(!day||!student||![1,2].includes(Number(room))||typeof room!=='number'||(day.date>'2026-12-01'&&room!==1))throw new MutationError(400,'추가할 학생과 운영 날짜·관리반을 확인해 주세요.');
+    const startPeriod=body.startPeriod,endPeriod=body.endPeriod;
+    if(!Number.isInteger(startPeriod)||!Number.isInteger(endPeriod)||Number(startPeriod)<1||Number(endPeriod)>day.periods||Number(startPeriod)>Number(endPeriod))throw new MutationError(400,'등교 교시를 확인해 주세요.');
+    if(state.participants.some(p=>p.studentId===studentId&&p.date===day.date))throw new MutationError(400,'이미 해당 날짜의 출석 명단에 등록된 학생입니다.');
+    const additions=state.additionalParticipants??[];
+    const previous=additions.find(p=>p.date===day.date&&p.studentId===studentId);
+    if(body.action==='add'){
+      if(previous)throw new MutationError(400,'이미 해당 날짜의 출석 명단에 추가된 학생입니다.');
+      state.additionalParticipants=[...additions,{studentId:student.id,date:day.date,room:room as Room,startPeriod:Number(startPeriod),endPeriod:Number(endPeriod),addedRevision:snapshot.revision+1}];
+    }else if(body.action==='remove'){
+      if(!previous||previous.room!==room||previous.startPeriod!==startPeriod||previous.endPeriod!==endPeriod)throw new MutationError(400,'취소할 추가 명단을 확인해 주세요.');
+      if(previous.addedRevision!==snapshot.revision||Object.values(state.attendance).some(r=>r.studentId===studentId&&r.date===day.date))throw new MutationError(422,'추가 후 다른 기록이 저장되어 명단 추가를 취소할 수 없습니다.');
+      state.additionalParticipants=additions.filter(p=>p!==previous);
+    }else throw new MutationError(400,'지원하지 않는 명단 변경입니다.');
+    summary=`${schoolDate(day.date)} 기간${room}반 ${student.classNo}반 ${student.number}번 ${student.name} ${body.action==='add'?'추가':'추가 취소'}`;
+    details={date:day.date,room,studentId:student.id,startPeriod,endPeriod,action:body.action};
   }else if(body.kind==='attendance'){
     const day=state.days.find(d=>d.date===body.date),period=body.period,room=body.room;
     if(!day||!Number.isInteger(period)||Number(period)<1||Number(period)>day.periods||![1,2].includes(Number(room))||(day.date>'2026-12-01'&&room!==1))throw new MutationError(400,'운영 날짜와 교시를 확인해 주세요.');

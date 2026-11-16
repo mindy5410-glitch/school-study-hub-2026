@@ -45,6 +45,15 @@ async function rawSchedule(id,to,extra={}){
   batch.set(logRef,{revision:h.revision+1,kind:'schedule',date:slot.date,room:slot.room,period:slot.period,assignmentId:id,fromTeacher:from,toTeacher:to,swapId:'',reason:'가상 검증',actorUid:'owner-test',actorName:'관리자',createdAt:at});
   batch.update(doc(owner,'school/live'),{revision:h.revision+1,updatedAt:at,updatedBy:'owner-test',lastLog:logRef.id});return batch.commit();
 }
+async function rawRoster(input={},options={}){
+  const target=options.db??owner,uid=options.uid??'owner-test',actorName=options.actorName??'관리자';
+  const date=input.date??'2026-11-30',studentId=input.studentId??state.students.find(s=>!state.participants.some(p=>p.studentId===s.id)).id,room=input.room??1,startPeriod=input.startPeriod??1,endPeriod=input.endPeriod??6,action=input.action??'add';
+  const h=await read(owner,'school/live'),previous=await read(owner,`dailyRosters/${date}`),at=serverTimestamp(),logRef=doc(collection(target,'history'));
+  const students={...previous?.students};if(action==='add')students[studentId]={room,startPeriod,endPeriod,addedRevision:h.revision+1,...options.entry};else delete students[studentId];
+  const record={date,students,revision:h.revision+1,updatedAt:at,updatedBy:uid,actorName,lastStudentId:studentId,lastAction:action,...options.document};
+  const log={revision:h.revision+1,kind:'roster',date,room,period:startPeriod,endPeriod,studentId,action,actorUid:uid,actorName,createdAt:at,...options.log};
+  const batch=writeBatch(target);batch.set(doc(target,'dailyRosters',options.docId??date),record);batch.set(logRef,log);batch.update(doc(target,'school/live'),{revision:h.revision+1,updatedAt:at,updatedBy:uid,lastLog:logRef.id});return batch.commit();
+}
 async function snapshot(c){const r=await c.request('/api/state');assert.equal(r.status,200,await r.clone().text());return r.json();}
 async function waitRevision(c,revision){const until=Date.now()+12000;while(Date.now()<until){if(c.snapshot()?.revision>=revision)return c.snapshot();await new Promise(r=>setTimeout(r,25));}throw new Error('Second client did not receive committed revision');}
 const post=(c,body)=>c.request('/api/mutate',{method:'POST',body:JSON.stringify(body)});
@@ -59,7 +68,7 @@ try{
   });
   await ok('anonymous, unregistered, unverified and wrong provider denied',async()=>{
     const contexts=[env.unauthenticatedContext(),env.authenticatedContext('stranger',token('stranger@example.test')),env.authenticatedContext('owner-test',{...token('owner@example.test'),email_verified:false}),env.authenticatedContext('another-password-user',passwordToken),env.authenticatedContext('shared-test',token('shared@example.test')),env.authenticatedContext('shared-test',{...passwordToken,firebase:{sign_in_provider:'anonymous'}}),env.authenticatedContext('owner-test',passwordToken)];
-    for(const c of contexts){const db=c.firestore();await assertFails(getDoc(doc(db,'school/config')));await assertFails(getDocs(collection(db,'attendance')));}
+    for(const c of contexts){const db=c.firestore();await assertFails(getDoc(doc(db,'school/config')));await assertFails(getDocs(collection(db,'attendance')));await assertFails(getDocs(collection(db,'dailyRosters')));}
   });
   await ok('dedicated password account reads school data without an email grant',async()=>{
     await assertSucceeds(getDocFromServer(doc(teacher,'school/config')));
@@ -122,6 +131,36 @@ try{
   });
   await ok('password holder cannot impersonate administrator in saved records',async()=>{
     await assertFails(rawAttendance({actorName:'관리자'},{db:teacher,uid:'shared-test',actorName:'공용 접속'}));
+  });
+  const newPupils=state.students.filter(s=>!state.participants.some(p=>p.studentId===s.id)).slice(0,8);
+  const extraBody=(studentId,date='2026-11-30',room=1)=>({kind:'roster',action:'add',date,room,studentId,startPeriod:2,endPeriod:6});
+  await ok('additional pupil broadcasts to both clients without changing the original plan',async()=>{
+    const s=await snapshot(second),r=await post(second,{...extraBody(newPupils[0].id),baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());const n=await r.json();await waitRevision(first,n.revision);
+    const p=first.snapshot().state.additionalParticipants.find(p=>p.studentId===newPupils[0].id&&p.date==='2026-11-30');assert.equal(p.room,1);assert.equal(p.startPeriod,2);assert.equal(p.endPeriod,6);
+    assert.ok(domain.roomRoster(first.snapshot().state,'2026-11-30',1).some(s=>s.id===newPupils[0].id));assert.equal(domain.expectedStatus(first.snapshot().state,newPupils[0].id,'2026-11-30',1),'experience');assert.equal(domain.expectedStatus(first.snapshot().state,newPupils[0].id,'2026-11-30',2),'present');
+    assert.equal(first.snapshot().state.participants.length,state.participants.length);assert.equal(domain.dayParticipants(first.snapshot().state,'2026-11-30').find(p=>p.studentId===newPupils[0].id).room,1);
+  });
+  await ok('added pupil attendance saves and a later undo cannot hide confirmed records',async()=>{
+    let s=await snapshot(first);let r=await post(first,{kind:'attendance',date:'2026-11-30',room:1,period:2,changes:[{studentId:newPupils[0].id,status:'present',note:'가상 추가 출석'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(second,s.revision);assert.equal(domain.getRecord(second.snapshot().state,newPupils[0].id,'2026-11-30',2).status,'present');
+    r=await post(second,{...extraBody(newPupils[0].id),action:'remove',baseRevision:s.revision});assert.equal(r.status,422,await r.text());await assertFails(rawRoster({...extraBody(newPupils[0].id),action:'remove'}));
+  });
+  await ok('immediate roster undo and attendance on an initially empty school day work',async()=>{
+    let s=await snapshot(second);let r=await post(second,{...extraBody(newPupils[1].id,'2026-12-17'),baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    r=await post(first,{...extraBody(newPupils[1].id,'2026-12-17'),action:'remove',baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(second,s.revision);assert.ok(!second.snapshot().state.additionalParticipants.some(p=>p.studentId===newPupils[1].id));
+    r=await post(second,{...extraBody(newPupils[1].id,'2026-12-17'),baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    r=await post(first,{kind:'attendance',date:'2026-12-17',room:1,period:2,changes:[{studentId:newPupils[1].id,status:'present',note:''}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(second,s.revision);assert.equal(domain.getRecord(second.snapshot().state,newPupils[1].id,'2026-12-17',2).status,'present');
+  });
+  await ok('concurrent additions cannot place the same pupil in two rooms',async()=>{
+    const s=await snapshot(first);await waitRevision(second,s.revision);const body={...extraBody(newPupils[2].id),baseRevision:s.revision};const results=await Promise.all([post(first,body),post(second,{...body,room:2})]);assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);await waitRevision(first,s.revision+1);await waitRevision(second,s.revision+1);assert.equal(first.snapshot().state.additionalParticipants.filter(p=>p.date===body.date&&p.studentId===body.studentId).length,1);
+    const r=await post(first,{...body,baseRevision:s.revision+1});assert.equal(r.status,400,await r.text());
+  });
+  await ok('server rejects malformed, duplicate, unknown and forged roster updates',async()=>{
+    const id=newPupils[3].id;
+    for(const patch of [{studentId:'missing'},{studentId:'1-1'},{studentId:newPupils[0].id},{date:'2026-12-11'},{date:'2026-12-17',room:2},{room:3},{startPeriod:0},{endPeriod:7},{startPeriod:6,endPeriod:2},{startPeriod:'1'}])await assertFails(rawRoster({studentId:id,...patch}));
+    await assertFails(rawRoster({studentId:id},{entry:{isAdmin:true}}));await assertFails(rawRoster({studentId:id},{document:{isAdmin:true}}));await assertFails(rawRoster({studentId:id},{entry:{addedRevision:0}}));await assertFails(rawRoster({studentId:id},{log:{studentId:newPupils[4].id}}));await assertFails(rawRoster({studentId:id},{docId:'2026-11-29'}));
+    await assertFails(rawRoster({studentId:id},{db:teacher,uid:'shared-test',actorName:'관리자'}));
+    const old=(await read(owner,'dailyRosters/2026-11-30')).students,h=await read(owner,'school/live');await assertFails(rawRoster({studentId:id},{document:{students:{...old,[id]:{room:1,startPeriod:1,endPeriod:6,addedRevision:h.revision+1},[newPupils[4].id]:{room:1,startPeriod:1,endPeriod:6,addedRevision:h.revision+1}}}}));
+    await assertFails(rawAttendance({studentId:newPupils[5].id}));await assertFails(deleteDoc(doc(owner,'dailyRosters/2026-11-30')));
   });
   await ok('master and history immutable; orphan writes and record deletes denied',async()=>{
     const h=await read(owner,'school/live');await assertFails(setDoc(doc(owner,'school/live'),{...h,revision:h.revision+1,updatedAt:serverTimestamp()}));

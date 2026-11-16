@@ -4,10 +4,17 @@ service cloud.firestore {
     // Dedicated single-school database. No unauthenticated or arbitrary-account access.
     // school/config: immutable bounded master JSON + immutable lookup maps,
     //   created once by the pinned owner after validating the initial-data digest.
+    //   studentIds contains the 315 master pupil IDs with literal true values.
     // school/live: revision (int), updatedAt (timestamp), updatedBy (uid), lastLog.
     // school/schedule: slot->teacher and teacher->count maps, revision, edit stamp.
     // attendance/{date|studentId|period}: one typed record per student/period.
     //   'unrecorded' is a reversible tombstone; client deletion is forbidden.
+    // dailyRosters/{date}: additional pupils for one existing school date.
+    //   Exact top-level fields are date, students, revision, updatedAt,
+    //   updatedBy, actorName, lastStudentId, lastAction. students holds at most
+    //   315 entries of {room:int, startPeriod:int, endPeriod:int,
+    //   addedRevision:int}; one key is added/removed per atomic transaction.
+    //   Removal is immediate undo only, while the added revision is still head.
     // history/{autoId}: immutable structured event committed with the live head.
     // security/shared: enabled (bool), validAfter (auth_time integer), updatedAt,
     //   updatedBy. Only the Google owner can change the shared access gate.
@@ -50,10 +57,22 @@ service cloud.firestore {
     function validPeriod(date,room,period) {
       return text(date,10,10) && room is int && room in [1,2] && period is int
         && period >= 1 && period <= config().days.get(date,0)
-        && config().groups.get(date+'-'+string(room),{}).size() > 0;
+        && (room == 1 || date <= '2026-12-01');
+    }
+    function knownStudent(id) {
+      return text(id,1,10) && config().get('studentIds',{}).get(id,false) == true;
+    }
+    function plannedStudent(date,id) {
+      return config().groups.get(date+'-1',{}).get(id,false) == true
+        || config().groups.get(date+'-2',{}).get(id,false) == true;
+    }
+    function additionalStudent(date,room,id) {
+      return knownStudent(id)
+        && exists(/databases/$(database)/documents/dailyRosters/$(date))
+        && get(/databases/$(database)/documents/dailyRosters/$(date)).data.students.get(id,{}).get('room',0) == room;
     }
     function validInitialConfig(d) {
-      return fields(d,['schemaVersion','master','slotCount','teacherCount','allowed','parallels','slots','limits','teacherNames','groups','days','createdAt','createdBy'])
+      return fields(d,['schemaVersion','master','slotCount','teacherCount','allowed','parallels','slots','limits','teacherNames','groups','days','studentIds','createdAt','createdBy'])
         && d.schemaVersion == 1 && text(d.master,1,400000)
         && d.slotCount == 89 && d.teacherCount == 13
         && d.allowed is map && d.allowed.size() == 89
@@ -62,6 +81,7 @@ service cloud.firestore {
         && d.limits is map && d.limits.size() == 13
         && d.teacherNames is map && d.teacherNames.size() == 13
         && d.groups is map && d.groups.size() <= 22
+        && d.studentIds is map && d.studentIds.size() == 315 && d.studentIds.values().hasOnly([true])
         && d.days is map && d.days.size() == 20 && stamp(d.createdAt,d.createdBy);
     }
     function validHeadCreate(d) {
@@ -127,7 +147,8 @@ service cloud.firestore {
       return fields(d,['studentId','date','period','room','status','note','updatedAt','updatedBy','actorName','revision'])
         && text(d.studentId,1,10) && validPeriod(d.date,d.room,d.period)
         && id == d.date+'|'+d.studentId+'|'+string(d.period)
-        && config().groups.get(d.date+'-'+string(d.room),{}).get(d.studentId,false) == true
+        && (config().groups.get(d.date+'-'+string(d.room),{}).get(d.studentId,false) == true
+          || additionalStudent(d.date,d.room,d.studentId))
         && d.status is string && d.status in ['present','late','early','absent','experience','unrecorded']
         && text(d.note,0,300) && (d.status != 'unrecorded' || d.note == '')
         && stamp(d.updatedAt,d.updatedBy) && actor(d.actorName) && inBatch(d.revision)
@@ -153,6 +174,71 @@ service cloud.firestore {
       return fields(d,['revision','kind','date','room','period','firstStudentId','actorUid','actorName','createdAt'])
         && d.kind == 'attendance' && validLogBase(d) && text(d.firstStudentId,1,10)
         && record.revision == d.revision && record.updatedBy == request.auth.uid && record.updatedAt == request.time;
+    }
+    function validRosterShape(d,date) {
+      return fields(d,['date','students','revision','updatedAt','updatedBy','actorName','lastStudentId','lastAction'])
+        && text(date,10,10) && d.date == date && config().days.get(date,0) > 0
+        && d.students is map && d.students.size() <= 315
+        && text(d.lastStudentId,1,10) && d.lastAction in ['add','remove']
+        && stamp(d.updatedAt,d.updatedBy) && actor(d.actorName) && inBatch(d.revision);
+    }
+    function validRosterEntry(entry,date) {
+      return fields(entry,['room','startPeriod','endPeriod','addedRevision'])
+        && validPeriod(date,entry.room,entry.startPeriod)
+        && entry.endPeriod is int && entry.endPeriod >= entry.startPeriod
+        && entry.endPeriod <= config().days.get(date,0)
+        && entry.addedRevision is int && entry.addedRevision >= 1 && entry.addedRevision <= 100000;
+    }
+    function matchingRosterLog(d,entry) {
+      let log=nextLog();
+      return log.kind == 'roster' && log.date == d.date
+        && log.studentId == d.lastStudentId && log.action == d.lastAction
+        && log.room == entry.room && log.period == entry.startPeriod && log.endPeriod == entry.endPeriod
+        && log.revision == d.revision && log.actorUid == d.updatedBy
+        && log.actorName == d.actorName && log.createdAt == d.updatedAt;
+    }
+    function rosterAdd(d,oldStudents) {
+      let id=d.lastStudentId;
+      let entry=d.students.get(id,{});
+      return d.lastAction == 'add' && !oldStudents.keys().hasAny([id])
+        && d.students.keys().hasAll([id]) && d.students.size() == oldStudents.size()+1
+        && knownStudent(id) && !plannedStudent(d.date,id)
+        && validRosterEntry(entry,d.date) && entry.addedRevision == d.revision
+        && matchingRosterLog(d,entry);
+    }
+    function rosterUndo(d,oldStudents) {
+      let id=d.lastStudentId;
+      let entry=oldStudents.get(id,{});
+      // Every attendance commit advances head. Requiring the original add to
+      // remain current prevents undo from orphaning any saved attendance.
+      return d.lastAction == 'remove' && oldStudents.keys().hasAll([id])
+        && !d.students.keys().hasAny([id]) && d.students.size() == oldStudents.size()-1
+        && validRosterEntry(entry,d.date) && entry.addedRevision == head().revision
+        && matchingRosterLog(d,entry);
+    }
+    function validRosterCreate(d,date) {
+      return validRosterShape(d,date) && d.students.size() == 1
+        && d.students.keys().hasOnly([d.lastStudentId]) && rosterAdd(d,{});
+    }
+    function validRosterUpdate(d,date) {
+      return validRosterShape(d,date) && d.date == resource.data.date
+        && d.students.diff(resource.data.students).affectedKeys().size() == 1
+        && d.students.diff(resource.data.students).affectedKeys().hasOnly([d.lastStudentId])
+        && (rosterAdd(d,resource.data.students) || rosterUndo(d,resource.data.students));
+    }
+    function validRosterLog(d) {
+      let roster=getAfter(/databases/$(database)/documents/dailyRosters/$(d.date)).data;
+      let entry=d.action == 'add' ? roster.students.get(d.studentId,{})
+        : get(/databases/$(database)/documents/dailyRosters/$(d.date)).data.students.get(d.studentId,{});
+      return fields(d,['revision','kind','date','room','period','endPeriod','studentId','action','actorUid','actorName','createdAt'])
+        && d.kind == 'roster' && validLogBase(d) && knownStudent(d.studentId)
+        && d.action in ['add','remove'] && d.endPeriod is int
+        && d.endPeriod >= d.period && d.endPeriod <= config().days.get(d.date,0)
+        && roster.revision == d.revision && roster.date == d.date
+        && roster.lastStudentId == d.studentId && roster.lastAction == d.action
+        && stamp(roster.updatedAt,roster.updatedBy) && roster.actorName == d.actorName
+        && validRosterEntry(entry,d.date) && entry.room == d.room
+        && entry.startPeriod == d.period && entry.endPeriod == d.endPeriod;
     }
     function validSharedGate(d) {
       return fields(d,['enabled','validAfter','updatedAt','updatedBy'])
@@ -183,11 +269,18 @@ service cloud.firestore {
       allow create,update: if member() && validAttendance(request.resource.data,id);
       allow delete: if false;
     }
+    match /dailyRosters/{date} {
+      allow read: if member();
+      allow create: if member() && validRosterCreate(request.resource.data,date);
+      allow update: if member() && validRosterUpdate(request.resource.data,date);
+      allow delete: if false;
+    }
     match /history/{id} {
       allow read: if member();
       allow create: if member() && id == nextHead().lastLog
         && ((request.resource.data.kind == 'schedule' && validScheduleLog(request.resource.data))
-          || (request.resource.data.kind == 'attendance' && validAttendanceLog(request.resource.data)));
+          || (request.resource.data.kind == 'attendance' && validAttendanceLog(request.resource.data))
+          || (request.resource.data.kind == 'roster' && validRosterLog(request.resource.data)));
       allow update,delete: if false;
     }
     match /access/{email} {
