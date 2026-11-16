@@ -89,4 +89,21 @@ assert.deepEqual(extraReset.state.additionalParticipants,extraRecorded.state.add
 assert.ok(domain.roomRoster(extraReset.state,date,1).some(s=>s.id==='3-1'));
 assert.throws(()=>applyMutation({...addedSnapshot,state:extraRecorded.state,revision:2},{...add,action:'remove',baseRevision:2},'검증'),e=>e.status===422);
 assert.throws(()=>applyMutation(addedSnapshot,{...add,action:'remove'},'검증'),e=>e.status===409);
-console.log(JSON.stringify({checks:'passed',scope:['lesson exclusion','simultaneous duty','swap','departure boundary','attendance defaults','default confirmation scope','saved exceptions and notes','attendance edit','stale revision','day/period/roster/note validation'],fixture:'synthetic only'}));
+const batchState=structuredClone(extraState);
+batchState.days.push({date:'2026-12-01',weekday:'화',periods:7},{date:'2026-12-02',weekday:'수',periods:6});
+const batchSnapshot={...snapshot,state:batchState},batchBefore=structuredClone(batchState);
+const batchEntries=[{date,room:2,startPeriod:2,endPeriod:6},{date:'2026-12-01',room:2,startPeriod:2,endPeriod:7},{date:'2026-12-02',room:1,startPeriod:2,endPeriod:6}];
+const batchBody={kind:'roster-batch',action:'add',studentId:'3-1',entries:batchEntries,baseRevision:0};
+const batchAdded=applyMutation(batchSnapshot,batchBody,'검증');
+assert.deepEqual(batchState,batchBefore,'A multi-day mutation must not change its input');
+assert.equal(batchAdded.state.additionalParticipants.length,3);
+for(const e of batchEntries){const p=batchAdded.state.additionalParticipants.find(p=>p.date===e.date);assert.deepEqual(p,{studentId:'3-1',...e,addedRevision:1});assert.ok(domain.roomRoster(batchAdded.state,e.date,e.room).some(s=>s.id==='3-1'));}
+const batchAddedSnapshot={...batchSnapshot,state:batchAdded.state,revision:1};
+assert.deepEqual(applyMutation(batchAddedSnapshot,{...batchBody,action:'remove',baseRevision:1},'검증').state.additionalParticipants,[]);
+assert.throws(()=>applyMutation({...batchAddedSnapshot,revision:2},{...batchBody,action:'remove',baseRevision:2},'검증'),e=>e.status===422);
+for(const patch of [{entries:[]},{entries:[...batchEntries,batchEntries[0]]},{entries:[batchEntries[0],{...batchEntries[1],date:'2026-12-11'}]},{entries:[{...batchEntries[0],endPeriod:7}]},{entries:[{...batchEntries[2],room:2}]},{entries:[{...batchEntries[0],extra:true}]},{entries:Array.from({length:21},()=>batchEntries[0])},{studentId:'missing'},{studentId:'1-1'}])assert.throws(()=>applyMutation(batchSnapshot,{...batchBody,...patch},'검증'),e=>e.status===400);
+assert.deepEqual(batchState,batchBefore,'A failure on any date must leave every date unchanged');
+assert.throws(()=>applyMutation(batchAddedSnapshot,{...batchBody,baseRevision:1},'검증'),e=>e.status===400);
+const batchRecorded=applyMutation(batchAddedSnapshot,{kind:'attendance',date:'2026-12-01',room:2,period:2,changes:[{studentId:'3-1',status:'present',note:'확정 출석'}],baseRevision:1},'검증');
+assert.throws(()=>applyMutation({...batchAddedSnapshot,state:batchRecorded.state,revision:2},{...batchBody,action:'remove',baseRevision:2},'검증'),e=>e.status===422);
+console.log(JSON.stringify({checks:'passed',scope:['lesson exclusion','simultaneous duty','swap','departure boundary','attendance defaults','default confirmation scope','saved exceptions and notes','attendance edit','stale revision','multi-day roster atomic validation and undo','day/period/roster/note validation'],fixture:'synthetic only'}));

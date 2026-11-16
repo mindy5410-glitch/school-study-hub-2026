@@ -1,5 +1,5 @@
 'use client';
-import {useCallback,useEffect,useState} from 'react';
+import {useCallback,useEffect,useRef,useState} from 'react';
 import {Calendar,ClipboardList,School,Settings,History,RefreshCw,Check,AlertCircle,X,ChevronRight,LogOut,Loader2,ArrowLeftRight} from 'lucide-react';
 import type {Assignment,AttendanceChange,Room,Snapshot} from '../lib/types';
 import {getRecord,schoolDate} from '../lib/domain';
@@ -23,6 +23,7 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null),[loadError,setLoadError]=useState('');
   const [view,setView]=useState<View>('schedule'),[date,setDate]=useState('2026-11-30');
   const [room,setRoom]=useState<Room>(1),[period,setPeriod]=useState(1),[classNo,setClassNo]=useState(1);
+  const attendanceContext=useRef({date,room});attendanceContext.current={date,room};
   const [teacher,setTeacher]=useState('all'),[scope,setScope]=useState<'all'|'day'>('all');
   const [attendanceSearch,setAttendanceSearch]=useState(''),[originalSearch,setOriginalSearch]=useState('');
   const [drafts,setDrafts]=useState<Drafts>({}),[saving,setSaving]=useState(false),[refreshing,setRefreshing]=useState(false);
@@ -106,8 +107,8 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
     if(!snapshot)return;const pupil=snapshot.state.students.find(s=>s.id===payload.studentId);setSaving(true);
     try{
       const result=await mutate({...payload});setAddingStudent(false);setAttendanceSearch('');
-      setToast({message:`${pupil?.name??''} 학생을 출석 명단에 추가했습니다.`,action:{label:'추가 취소',run:async()=>{
-        try{await mutate({...payload,action:'remove',baseRevision:result.revision});setDrafts(previous=>{const next={...previous};delete next[payload.studentId];return next;});setToast({message:'명단 추가를 취소했습니다.'});}
+      setToast({message:`${pupil?.name??''} 학생을 선택한 ${payload.entries.length}일의 출석 명단에 추가했습니다.`,action:{label:'추가 취소',run:async()=>{
+        try{await mutate({...payload,action:'remove',baseRevision:result.revision});setDrafts(previous=>{if(!payload.entries.some(e=>e.date===attendanceContext.current.date&&e.room===attendanceContext.current.room))return previous;const next={...previous};delete next[payload.studentId];return next;});setToast({message:`${payload.entries.length}일의 명단 추가를 취소했습니다.`});}
         catch(e){setToast({message:e instanceof Error?e.message:'추가를 취소하지 못했습니다.',error:true});}
       }}});
     }finally{setSaving(false);}

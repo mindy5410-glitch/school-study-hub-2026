@@ -55,6 +55,14 @@ async function rawRoster(input={},options={}){
   const log={revision:h.revision+1,kind:'roster',date,room,period:startPeriod,endPeriod,studentId,action,actorUid:uid,actorName,createdAt:at,...options.log};
   const batch=writeBatch(target);batch.set(doc(target,'dailyRosters',options.docId??date),record);batch.set(logRef,log);batch.update(doc(target,'school/live'),{revision:h.revision+1,updatedAt:at,updatedBy:uid,lastLog:logRef.id});return batch.commit();
 }
+async function rawRosterBatch(studentId,entries,options={}){
+  const target=options.db??owner,uid=options.uid??'owner-test',actorName=options.actorName??'관리자',action=options.action??'add';
+  const h=await read(owner,'school/live'),at=serverTimestamp(),logRef=doc(collection(target,'history')),anchor=entries[0],batch=writeBatch(target);
+  const old=await Promise.all(entries.map(e=>read(owner,`dailyRosters/${e.date}`)));
+  entries.forEach((e,i)=>{const students={...old[i]?.students};if(action==='add')students[studentId]={room:e.room,startPeriod:e.startPeriod,endPeriod:e.endPeriod,addedRevision:h.revision+1};else delete students[studentId];batch.set(doc(target,'dailyRosters',e.date),{date:e.date,students,revision:h.revision+1,updatedAt:at,updatedBy:uid,actorName,lastStudentId:studentId,lastAction:action,...options.document});});
+  batch.set(logRef,{revision:h.revision+1,kind:'roster-batch',date:anchor.date,room:anchor.room,period:anchor.startPeriod,endPeriod:anchor.endPeriod,studentId,action,entries:Object.fromEntries(entries.map(e=>[e.date,`${e.room}:${e.startPeriod}:${e.endPeriod}`])),actorUid:uid,actorName,createdAt:at,...options.log});
+  batch.update(doc(target,'school/live'),{revision:h.revision+1,updatedAt:at,updatedBy:uid,lastLog:logRef.id});return batch.commit();
+}
 async function snapshot(c){const r=await c.request('/api/state');assert.equal(r.status,200,await r.clone().text());return r.json();}
 async function waitRevision(c,revision){const until=Date.now()+12000;while(Date.now()<until){if(c.snapshot()?.revision>=revision)return c.snapshot();await new Promise(r=>setTimeout(r,25));}throw new Error('Second client did not receive committed revision');}
 const post=(c,body)=>c.request('/api/mutate',{method:'POST',body:JSON.stringify(body)});
@@ -198,6 +206,41 @@ try{
     await assertFails(rawRoster({studentId:id},{db:teacher,uid:'shared-test',actorName:'관리자'}));
     const old=(await read(owner,'dailyRosters/2026-11-30')).students,h=await read(owner,'school/live');await assertFails(rawRoster({studentId:id},{document:{students:{...old,[id]:{room:1,startPeriod:1,endPeriod:6,addedRevision:h.revision+1},[newPupils[4].id]:{room:1,startPeriod:1,endPeriod:6,addedRevision:h.revision+1}}}}));
     await assertFails(rawAttendance({studentId:newPupils[5].id}));await assertFails(deleteDoc(doc(owner,'dailyRosters/2026-11-30')));
+  });
+  const batchPupils=state.students.filter(s=>!state.participants.some(p=>p.studentId===s.id)).slice(-4);
+  const entriesFor=dates=>dates.map(date=>({date,room:date<='2026-12-01'?2:1,startPeriod:1,endPeriod:state.days.find(d=>d.date===date).periods}));
+  const batchDays=entriesFor(['2026-11-30','2026-12-01','2026-12-17']);
+  const batchBody=(id,entries=batchDays)=>({kind:'roster-batch',action:'add',studentId:id,entries});
+  await ok('multiple roster dates share one revision, both clients, and immediate whole-batch undo',async()=>{
+    let s=await snapshot(second),r=await post(second,{...batchBody(batchPupils[0].id),baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());let next=await r.json();assert.equal(next.revision,s.revision+1);await waitRevision(first,next.revision);
+    for(const client of [first,second])for(const e of batchDays){const p=client.snapshot().state.additionalParticipants.find(p=>p.studentId===batchPupils[0].id&&p.date===e.date);assert.deepEqual(p,{studentId:batchPupils[0].id,...e,addedRevision:next.revision});assert.ok(domain.dayParticipants(client.snapshot().state,e.date).some(p=>p.studentId===batchPupils[0].id&&p.room===e.room));}
+    const head=await read(owner,'school/live'),log=await read(owner,`history/${head.lastLog}`);assert.equal(log.kind,'roster-batch');assert.deepEqual(log.entries,Object.fromEntries(batchDays.map(e=>[e.date,`${e.room}:${e.startPeriod}:${e.endPeriod}`])));
+    r=await post(first,{...batchBody(batchPupils[0].id),action:'remove',baseRevision:next.revision});assert.equal(r.status,200,await r.clone().text());next=await r.json();await waitRevision(second,next.revision);assert.ok(!second.snapshot().state.additionalParticipants.some(p=>p.studentId===batchPupils[0].id));
+  });
+  await ok('an invalid or already registered date cannot leave a partial multi-day addition',async()=>{
+    let s=await snapshot(first),r=await post(first,{...extraBody(batchPupils[0].id,'2026-12-17'),baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(first,{...batchBody(batchPupils[0].id),baseRevision:s.revision});assert.equal(r.status,400,await r.text());assert.equal(first.snapshot().revision,s.revision);assert.ok(!first.snapshot().state.additionalParticipants.some(p=>p.studentId===batchPupils[0].id&&p.date==='2026-11-30'));
+    r=await post(first,{...batchBody(batchPupils[3].id,[batchDays[0],{...batchDays[1],date:'2026-12-11'}]),baseRevision:s.revision});assert.equal(r.status,400,await r.text());assert.ok(!first.snapshot().state.additionalParticipants.some(p=>p.studentId===batchPupils[3].id));
+  });
+  await ok('all 20 selected dates add and undo atomically with the shared password identity',async()=>{
+    let s=await snapshot(second);await waitRevision(second,first.snapshot().revision);s=await snapshot(second);const entries=entriesFor(state.days.map(d=>d.date)),body=batchBody(batchPupils[1].id,entries);
+    let r=await post(second,{...body,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    const added=s.state.additionalParticipants.filter(p=>p.studentId===batchPupils[1].id);assert.equal(added.length,20);assert.ok(added.every(p=>p.addedRevision===s.revision));
+    r=await post(second,{...body,action:'remove',baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);assert.ok(!first.snapshot().state.additionalParticipants.some(p=>p.studentId===batchPupils[1].id));
+    r=await post(second,{...body,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(second,{kind:'attendance',date:'2026-12-17',room:1,period:1,changes:[{studentId:batchPupils[1].id,status:'present',note:'다중 날짜 출석'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    r=await post(second,{...body,action:'remove',baseRevision:s.revision});assert.equal(r.status,422,await r.text());assert.equal(second.snapshot().state.additionalParticipants.filter(p=>p.studentId===batchPupils[1].id).length,20);assert.equal(domain.getRecord(second.snapshot().state,batchPupils[1].id,'2026-12-17',1).note,'다중 날짜 출석');
+  });
+  await ok('simultaneous multi-day additions never split or overwrite one another',async()=>{
+    const s=await snapshot(first);await waitRevision(second,s.revision);const a=batchBody(batchPupils[2].id),b=batchBody(batchPupils[2].id,entriesFor(['2026-12-02','2026-12-18']));
+    const responses=await Promise.all([post(first,{...a,baseRevision:s.revision}),post(second,{...b,baseRevision:s.revision})]);assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);await waitRevision(first,s.revision+1);await waitRevision(second,s.revision+1);
+    const wanted=(responses[0].ok?a:b).entries.map(e=>e.date).sort(),actual=first.snapshot().state.additionalParticipants.filter(p=>p.studentId===batchPupils[2].id).map(p=>p.date).sort();assert.deepEqual(actual,wanted);
+  });
+  await ok('raw batch rules reject malformed non-anchor metadata and forged writes without partial effects',async()=>{
+    const id=batchPupils[3].id,s=await snapshot(first),valid=Object.fromEntries(batchDays.map(e=>[e.date,`${e.room}:${e.startPeriod}:${e.endPeriod}`]));
+    for(const entries of [{...valid,'2026-12-17':'1:0:6'},{...valid,'2026-12-17':'2:1:6'},{...valid,'2026-12-11':'1:1:6'},{...valid,'2026-12-17':{room:1,startPeriod:1,endPeriod:6}}])await assertFails(rawRosterBatch(id,batchDays,{log:{entries}}));
+    await assertFails(rawRosterBatch(id,batchDays,{log:{actorName:'공용 접속'}}));await assertFails(rawRosterBatch(id,batchDays,{document:{isAdmin:true}}));
+    assert.equal((await read(owner,'school/live')).revision,s.revision);for(const e of batchDays)assert.ok(!(await read(owner,`dailyRosters/${e.date}`)).students[id]);
   });
   await ok('master and history immutable; orphan writes and record deletes denied',async()=>{
     const h=await read(owner,'school/live');await assertFails(setDoc(doc(owner,'school/live'),{...h,revision:h.revision+1,updatedAt:serverTimestamp()}));

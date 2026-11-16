@@ -1,6 +1,6 @@
 import {collection,doc,getDocFromServer,limit,onSnapshot,onSnapshotsInSync,orderBy,query,runTransaction,serverTimestamp,type Firestore,type Unsubscribe} from 'firebase/firestore';
 import type {Auth,User} from 'firebase/auth';
-import type {AttendanceChange,Room,Snapshot} from './types';
+import type {AttendanceChange,Room,RosterDateEntry,Snapshot} from './types';
 import {recordKey,schoolDate} from './domain';
 import {applyMutation,MutationError} from './mutations';
 import {buildCloudConfig,cloudSchedule,cloudRoster,rosterParticipants,decodeInitialData,stateWithSchedule,type CloudConfig,type CloudSchedule,type CloudHead,type CloudAttendance,type CloudHistory,type CloudRoster} from './cloud-model';
@@ -26,7 +26,7 @@ export function createSharedClient(db:Firestore,auth:Auth,user:User,actorName:st
       const state=stateWithSchedule(config,schedule);
       state.additionalParticipants=rosterParticipants([...rosters.values()]);
       for(const [id,r] of records)if(r.status!=='unrecorded')state.attendance[id]={studentId:r.studentId,date:r.date,period:r.period,status:r.status,note:r.note,updatedAt:r.updatedAt.toDate().toISOString(),updatedBy:r.actorName};
-      cached={state,revision:head.revision,updatedAt:head.updatedAt.toDate().toISOString(),history:[...history.entries()].map(([id,h])=>({id,revision:h.revision,kind:h.kind,actor:h.actorName,created_at:h.createdAt.toDate().toISOString(),summary:h.kind==='schedule'?`${schoolDate(h.date)} 기간${h.room}반 ${h.period}교시 ${h.fromTeacher} → ${h.toTeacher}${h.swapId?' (맞교환)':''}`:h.kind==='roster'?`${schoolDate(h.date)} 기간${h.room}반 ${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} ${h.action==='add'?'학생 추가':'추가 취소'}`:`${schoolDate(h.date)} 기간${h.room}반 ${h.period}교시 출석 기록 변경`})).sort((a,b)=>b.revision-a.revision).slice(0,20)};
+      cached={state,revision:head.revision,updatedAt:head.updatedAt.toDate().toISOString(),history:[...history.entries()].map(([id,h])=>({id,revision:h.revision,kind:h.kind,actor:h.actorName,created_at:h.createdAt.toDate().toISOString(),summary:h.kind==='schedule'?`${schoolDate(h.date)} 기간${h.room}반 ${h.period}교시 ${h.fromTeacher} → ${h.toTeacher}${h.swapId?' (맞교환)':''}`:h.kind==='roster-batch'?`${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} · ${Object.keys(h.entries??{}).sort().map(d=>schoolDate(d)).join(', ')} ${h.action==='add'?'학생 추가':'추가 취소'}`:h.kind==='roster'?`${schoolDate(h.date)} 기간${h.room}반 ${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} ${h.action==='add'?'학생 추가':'추가 취소'}`:`${schoolDate(h.date)} 기간${h.room}반 ${h.period}교시 출석 기록 변경`})).sort((a,b)=>b.revision-a.revision).slice(0,20)};
       changeStatus('ready');for(const w of waiters)if(cached.revision>=w.minimum){clearTimeout(w.timer);w.resolve(cached);waiters.delete(w);}
       if(cached.revision!==lastPublished){lastPublished=cached.revision;window.dispatchEvent(new Event('school:updated'));}
     }catch(error){fail(error);}
@@ -50,6 +50,7 @@ export function createSharedClient(db:Firestore,auth:Auth,user:User,actorName:st
   }
   async function mutate(body:Record<string,unknown>){
     active();const before=await waitForRevision();applyMutation(before,body,actorName);
+    const batchEntries=body.kind==='roster-batch'?[...body.entries as RosterDateEntry[]].sort((a,b)=>a.date.localeCompare(b.date)):[];
     const logRef=doc(collection(db,'history'));
     let seenRevision=before.revision;
     try{
@@ -60,9 +61,11 @@ export function createSharedClient(db:Firestore,auth:Auth,user:User,actorName:st
         const configSnapshot=await tx.get(configRef),scheduleSnapshot=await tx.get(scheduleRef);
         if(!configSnapshot.exists()||!scheduleSnapshot.exists())throw new MutationError(503,'운영 자료를 확인해 주세요.');
         const serverState=stateWithSchedule(configSnapshot.data() as CloudConfig,scheduleSnapshot.data() as CloudSchedule);
-        const rosterRef=body.kind==='attendance'||body.kind==='roster'?doc(db,'dailyRosters',String(body.date)):null;
-        const rosterSnapshot=rosterRef?await tx.get(rosterRef):null;
-        serverState.additionalParticipants=rosterSnapshot?.exists()?rosterParticipants([rosterSnapshot.data() as CloudRoster]):[];
+        const rosterDates=body.kind==='roster-batch'?batchEntries.map(e=>e.date):body.kind==='attendance'||body.kind==='roster'?[String(body.date)]:[];
+        const rosterRefs=rosterDates.map(date=>doc(db,'dailyRosters',date));
+        const rosterSnapshots=await Promise.all(rosterRefs.map(ref=>tx.get(ref)));
+        const rosterRef=rosterRefs[0];
+        serverState.additionalParticipants=rosterParticipants(rosterSnapshots.filter(s=>s.exists()).map(s=>s.data() as CloudRoster));
         serverState.attendance=before.state.attendance;
         const result=applyMutation({...before,state:serverState,revision:currentHead.revision},body,actorName);
         const nextRevision=currentHead.revision+1;const timestamp=serverTimestamp();
@@ -70,6 +73,10 @@ export function createSharedClient(db:Firestore,auth:Auth,user:User,actorName:st
           const source=serverState.assignments.find(a=>a.id===body.assignmentId)!;
           tx.set(scheduleRef,cloudSchedule(result.state,user.uid,timestamp,nextRevision));
           tx.set(logRef,{revision:nextRevision,kind:'schedule',date:source.date,room:source.room,period:source.period,assignmentId:source.id,fromTeacher:source.teacherId,toTeacher:String(body.teacherId),swapId:typeof body.swapId==='string'?body.swapId:'',reason:typeof body.reason==='string'?body.reason.trim().slice(0,300):'',actorUid:user.uid,actorName,createdAt:timestamp});
+        }else if(result.kind==='roster-batch'){
+          const studentId=String(body.studentId),action=body.action as 'add'|'remove',anchor=batchEntries[0];
+          batchEntries.forEach((entry,index)=>tx.set(rosterRefs[index],cloudRoster(result.state,entry.date,studentId,action,user.uid,actorName,timestamp,nextRevision)));
+          tx.set(logRef,{revision:nextRevision,kind:'roster-batch',date:anchor.date,room:anchor.room,period:anchor.startPeriod,endPeriod:anchor.endPeriod,studentId,action,entries:Object.fromEntries(batchEntries.map(e=>[e.date,`${e.room}:${e.startPeriod}:${e.endPeriod}`])),actorUid:user.uid,actorName,createdAt:timestamp});
         }else if(result.kind==='roster'){
           const date=String(body.date),studentId=String(body.studentId),action=body.action as 'add'|'remove';
           tx.set(rosterRef!,cloudRoster(result.state,date,studentId,action,user.uid,actorName,timestamp,nextRevision));

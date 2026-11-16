@@ -4,6 +4,7 @@ export interface Student {id:string;classNo:number;number:number;name:string;ori
 export interface SchoolDay {date:string;weekday:string;periods:number}
 export interface Participant {studentId:string;date:string;room:Room;leavePeriod:number|null;startPeriod?:number}
 export interface AdditionalParticipant {studentId:string;date:string;room:Room;startPeriod:number;endPeriod:number;addedRevision:number}
+export interface RosterDateEntry {date:string;room:Room;startPeriod:number;endPeriod:number}
 export interface Teacher {id:string;name:string;minDuties:number;maxDuties:number|null;preferredDuties:number}
 export interface Assignment {id:string;date:string;room:Room;period:number;teacherId:string}
 export interface BlockedLesson {teacherId:string;weekday:string;period:number;grade:number;classNo:number;subject:string;sourceCell:string}

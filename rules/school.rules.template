@@ -15,6 +15,12 @@ service cloud.firestore {
     //   315 entries of {room:int, startPeriod:int, endPeriod:int,
     //   addedRevision:int}; one key is added/removed per atomic transaction.
     //   Removal is immediate undo only, while the added revision is still head.
+    // history kind roster-batch adds an entries map (date -> "room:start:end").
+    //   Every written roster validates its own manifest entry; the log checks
+    //   one anchor roster to keep a 20-date transaction below document limits.
+    //   The manifest cannot prove that every non-anchor date was written.
+    //   Date-specific bounds apply to actual writes; unwritten claims remain
+    //   bounded audit metadata rather than independently verified changes.
     // history/{autoId}: immutable structured event committed with the live head.
     // security/shared: enabled (bool), validAfter (auth_time integer), updatedAt,
     //   updatedBy. Only the Google owner can change the shared access gate.
@@ -191,11 +197,13 @@ service cloud.firestore {
     }
     function matchingRosterLog(d,entry) {
       let log=nextLog();
-      return log.kind == 'roster' && log.date == d.date
-        && log.studentId == d.lastStudentId && log.action == d.lastAction
-        && log.room == entry.room && log.period == entry.startPeriod && log.endPeriod == entry.endPeriod
+      return log.studentId == d.lastStudentId && log.action == d.lastAction
         && log.revision == d.revision && log.actorUid == d.updatedBy
-        && log.actorName == d.actorName && log.createdAt == d.updatedAt;
+        && log.actorName == d.actorName && log.createdAt == d.updatedAt
+        && ((log.kind == 'roster' && log.date == d.date
+            && log.room == entry.room && log.period == entry.startPeriod && log.endPeriod == entry.endPeriod)
+          || (log.kind == 'roster-batch'
+            && log.entries.get(d.date,'') == rangeCode(entry.room,entry.startPeriod,entry.endPeriod)));
     }
     function rosterAdd(d,oldStudents) {
       let id=d.lastStudentId;
@@ -240,6 +248,36 @@ service cloud.firestore {
         && validRosterEntry(entry,d.date) && entry.room == d.room
         && entry.startPeriod == d.period && entry.endPeriod == d.endPeriod;
     }
+    function rangeCode(room,start,end) {
+      return string(room)+':'+string(start)+':'+string(end);
+    }
+    function validBatchEntries(entries) {
+      // The manifest is bounded to known dates and finite room/period codes.
+      // Each written roster enforces its own date-specific room/period bounds.
+      return entries is map && entries.size() >= 1 && entries.size() <= 20
+        && entries.keys().hasOnly(config().days.keys())
+        && entries.values().hasOnly([
+          '1:1:1','1:1:2','1:1:3','1:1:4','1:1:5','1:1:6','1:1:7','1:2:2',
+          '1:2:3','1:2:4','1:2:5','1:2:6','1:2:7','1:3:3','1:3:4','1:3:5',
+          '1:3:6','1:3:7','1:4:4','1:4:5','1:4:6','1:4:7','1:5:5','1:5:6',
+          '1:5:7','1:6:6','1:6:7','1:7:7','2:1:1','2:1:2','2:1:3','2:1:4',
+          '2:1:5','2:1:6','2:1:7','2:2:2','2:2:3','2:2:4','2:2:5','2:2:6',
+          '2:2:7','2:3:3','2:3:4','2:3:5','2:3:6','2:3:7','2:4:4','2:4:5',
+          '2:4:6','2:4:7','2:5:5','2:5:6','2:5:7','2:6:6','2:6:7','2:7:7'
+        ]);
+    }
+    function validRosterBatchLog(d) {
+      let roster=getAfter(/databases/$(database)/documents/dailyRosters/$(d.date)).data;
+      return fields(d,['revision','kind','date','room','period','endPeriod','studentId','action','entries','actorUid','actorName','createdAt'])
+        && d.kind == 'roster-batch' && validLogBase(d) && knownStudent(d.studentId)
+        && d.action in ['add','remove'] && d.endPeriod is int
+        && d.endPeriod >= d.period && d.endPeriod <= config().days.get(d.date,0)
+        && roster.revision == d.revision && roster.date == d.date
+        && roster.lastStudentId == d.studentId && roster.lastAction == d.action
+        && stamp(roster.updatedAt,roster.updatedBy) && roster.actorName == d.actorName
+        && validBatchEntries(d.entries)
+        && d.entries.get(d.date,'') == rangeCode(d.room,d.period,d.endPeriod);
+    }
     function validSharedGate(d) {
       return fields(d,['enabled','validAfter','updatedAt','updatedBy'])
         && d.enabled is bool && d.validAfter is int && d.validAfter >= 0 && d.validAfter <= 4102444800
@@ -280,7 +318,8 @@ service cloud.firestore {
       allow create: if member() && id == nextHead().lastLog
         && ((request.resource.data.kind == 'schedule' && validScheduleLog(request.resource.data))
           || (request.resource.data.kind == 'attendance' && validAttendanceLog(request.resource.data))
-          || (request.resource.data.kind == 'roster' && validRosterLog(request.resource.data)));
+          || (request.resource.data.kind == 'roster' && validRosterLog(request.resource.data))
+          || (request.resource.data.kind == 'roster-batch' && validRosterBatchLog(request.resource.data)));
       allow update,delete: if false;
     }
     match /access/{email} {

@@ -25,10 +25,7 @@ export function Modal({title,description,children,onClose,wide=false,className='
     </section>
   </div>;
 }
-export function DatePicker({days,date,onChange}:{days:SchoolDay[];date:string;onChange:(date:string)=>void}){
-  const selectedDateId=useId();
-  const [open,setOpen]=useState(false),[month,setMonth]=useState(date.slice(0,7));
-  const i=days.findIndex(d=>d.date===date),selected=days[i];
+export function CalendarGrid({days,month,onMonth,selectedDates,onSelect,multiple=false,disabled=false,disabledDates={}}:{days:SchoolDay[];month:string;onMonth:(month:string)=>void;selectedDates:string[];onSelect:(date:string)=>void;multiple?:boolean;disabled?:boolean;disabledDates?:Record<string,string>}){
   const months=[...new Set(days.map(d=>d.date.slice(0,7)))].sort(),monthIndex=months.indexOf(month);
   const [year,monthNumber]=month.split('-').map(Number);
   const firstWeekday=new Date(Date.UTC(year,monthNumber-1,1)).getUTCDay();
@@ -38,14 +35,26 @@ export function DatePicker({days,date,onChange}:{days:SchoolDay[];date:string;on
     return number<1||number>monthLength?null:{number,date:`${month}-${String(number).padStart(2,'0')}`,weekday:index%7};
   });
   const operatingDates=new Set(days.map(d=>d.date)),weekdays=['일','월','화','수','목','금','토'];
+  return <div className={multiple?'calendar-multiple':undefined}>
+    <div className="calendar-month"><button className="icon-button bordered" aria-label="이전 달" disabled={disabled||monthIndex<=0} onClick={()=>onMonth(months[monthIndex-1])}><ChevronLeft size={20}/></button><h3 aria-live="polite">{year}년 {monthNumber}월</h3><button className="icon-button bordered" aria-label="다음 달" disabled={disabled||monthIndex<0||monthIndex>=months.length-1} onClick={()=>onMonth(months[monthIndex+1])}><ChevronRight size={20}/></button></div>
+    <table className="date-calendar" aria-label={`${year}년 ${monthNumber}월 운영일 달력`}><thead><tr>{weekdays.map(day=><th scope="col" key={day}>{day}</th>)}</tr></thead><tbody>{Array.from({length:cells.length/7},(_,row)=><tr key={row}>{cells.slice(row*7,row*7+7).map((cell,column)=>{
+      if(!cell)return <td key={column}/>;
+      const selected=selectedDates.includes(cell.date),reason=disabledDates[cell.date];
+      return <td key={column}><button className={`calendar-day ${selected?'selected':''} ${selected&&reason?'calendar-conflict':''}`} aria-label={`${year}년 ${monthNumber}월 ${cell.number}일 ${weekdays[cell.weekday]}요일`} aria-current={!multiple&&selected?'date':undefined} aria-pressed={multiple?selected:undefined} disabled={disabled||!operatingDates.has(cell.date)||!!reason&&!selected} title={reason||(!operatingDates.has(cell.date)?'운영하지 않는 날':undefined)} onClick={()=>onSelect(cell.date)}>{cell.number}</button></td>;
+    })}</tr>)}</tbody></table>
+  </div>;
+}
+export function DatePicker({days,date,onChange}:{days:SchoolDay[];date:string;onChange:(date:string)=>void}){
+  const selectedDateId=useId();
+  const [open,setOpen]=useState(false),[month,setMonth]=useState(date.slice(0,7));
+  const i=days.findIndex(d=>d.date===date),selected=days[i];
   return <>
     <div className="date-picker"><button className="icon-button" aria-label="이전 운영일" disabled={i<=0} onClick={()=>onChange(days[i-1].date)}><ChevronLeft size={17}/></button>
       <button className="date-trigger" aria-label="운영 날짜 선택" aria-describedby={selectedDateId} aria-haspopup="dialog" aria-expanded={open} disabled={!days.length} onClick={()=>{setMonth((selected??days[0]).date.slice(0,7));setOpen(true);}}><Calendar size={17} aria-hidden="true"/><span id={selectedDateId}>{selected?`${schoolDate(date,true)} (${selected.weekday})`:'날짜 선택'}</span></button>
       <button className="icon-button" aria-label="다음 운영일" disabled={i<0||i>=days.length-1} onClick={()=>onChange(days[i+1].date)}><ChevronRight size={17}/></button>
     </div>
     {open&&createPortal(<Modal title="운영 날짜 선택" className="calendar-modal" onClose={()=>setOpen(false)}>
-      <div className="calendar-month"><button className="icon-button bordered" aria-label="이전 달" disabled={monthIndex<=0} onClick={()=>setMonth(months[monthIndex-1])}><ChevronLeft size={20}/></button><h3 aria-live="polite">{year}년 {monthNumber}월</h3><button className="icon-button bordered" aria-label="다음 달" disabled={monthIndex<0||monthIndex>=months.length-1} onClick={()=>setMonth(months[monthIndex+1])}><ChevronRight size={20}/></button></div>
-      <table className="date-calendar" aria-label={`${year}년 ${monthNumber}월 운영일 달력`}><thead><tr>{weekdays.map(day=><th scope="col" key={day}>{day}</th>)}</tr></thead><tbody>{Array.from({length:cells.length/7},(_,row)=><tr key={row}>{cells.slice(row*7,row*7+7).map((cell,column)=><td key={column}>{cell&&<button className={`calendar-day ${cell.date===date?'selected':''}`} aria-label={`${year}년 ${monthNumber}월 ${cell.number}일 ${weekdays[cell.weekday]}요일`} aria-current={cell.date===date?'date':undefined} disabled={!operatingDates.has(cell.date)} title={operatingDates.has(cell.date)?undefined:'운영하지 않는 날'} onClick={()=>{setOpen(false);onChange(cell.date);}}>{cell.number}</button>}</td>)}</tr>)}</tbody></table>
+      <CalendarGrid days={days} month={month} onMonth={setMonth} selectedDates={[date]} onSelect={next=>{setOpen(false);onChange(next);}}/>
     </Modal>,document.body)}
   </>;
 }

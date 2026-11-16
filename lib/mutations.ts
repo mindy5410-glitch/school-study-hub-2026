@@ -14,6 +14,22 @@ export function applyMutation(snapshot:Snapshot,body:Record<string,unknown>,acto
     state.assignments=assignments;
     summary=`${schoolDate(original.date)} 기간${original.room}반 ${original.period}교시 ${original.teacherId} → ${body.teacherId}${body.swapId?' (맞교환)':''}`;
     details={assignmentId:body.assignmentId,previousTeacher:original.teacherId,teacherId:body.teacherId,swapId:body.swapId??null,reason:typeof body.reason==='string'?body.reason.trim().slice(0,300):''};
+  }else if(body.kind==='roster-batch'){
+    if(!Array.isArray(body.entries)||!body.entries.length||body.entries.length>20)throw new MutationError(400,'추가할 운영 날짜를 1일 이상 선택해 주세요.');
+    const dates=new Set<string>();
+    for(const raw of body.entries){
+      if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).length!==4||!['date','room','startPeriod','endPeriod'].every(key=>Object.hasOwn(raw,key)))throw new MutationError(400,'추가할 날짜와 교시를 확인해 주세요.');
+      const entry=raw as Record<string,unknown>;
+      if(typeof entry.date!=='string'||dates.has(entry.date))throw new MutationError(400,'선택한 날짜가 중복되었거나 올바르지 않습니다.');
+      dates.add(entry.date);
+      // Validate every date before the shared client writes anything. The same
+      // revision makes all selected additions one operation, including undo.
+      const result=applyMutation({...snapshot,state},{kind:'roster',action:body.action,studentId:body.studentId,...entry,baseRevision:body.baseRevision},actor,now);
+      state.additionalParticipants=result.state.additionalParticipants;
+    }
+    const student=state.students.find(s=>s.id===body.studentId)!;
+    summary=`${student.name} ${dates.size}일 출석 명단 ${body.action==='add'?'추가':'추가 취소'}`;
+    details={studentId:body.studentId,action:body.action,entries:body.entries};
   }else if(body.kind==='roster'){
     const day=state.days.find(d=>d.date===body.date),room=body.room,studentId=body.studentId;
     const student=state.students.find(s=>s.id===studentId);

@@ -283,4 +283,21 @@ tbody tr:hover{background:#f1f5fc}
 .calendar-day.selected{background:var(--accent-dark);color:#fff;font-weight:700}
 .calendar-day.selected:hover:not(:disabled){background:var(--accent-dark);color:#fff}
 .calendar-day:disabled{background:#f4f5f6;color:#8a949e;cursor:default;opacity:1}
+.modal.wide.student-add-modal{width:980px}
+.student-add-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:30px}
+.student-add-modal .student-picker-list{max-height:230px;margin-bottom:20px}
+.student-add-modal .student-period-range .field{margin-bottom:0}
+.student-dates-heading{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.student-dates-heading h3{font-size:18px;font-weight:700}
+.student-dates-heading h3 span{font-size:15px;color:var(--accent-dark);margin-left:5px}
+.student-dates-heading>div{display:flex;gap:7px}
+.student-add-dates .calendar-month{margin-bottom:7px}
+.student-add-dates .calendar-month h3{font-size:19px}
+.student-add-dates .date-calendar{border-spacing:2px}
+.student-add-dates .calendar-day{height:44px;min-height:44px;aspect-ratio:auto;font-size:16px}
+.student-add-dates .date-calendar thead th{padding:6px 0;font-size:14px}
+.student-date-selection{display:flex;gap:6px;flex-wrap:wrap;max-height:64px;overflow:auto;margin-top:12px}
+.student-date-selection>button{display:inline-flex;align-items:center;gap:6px;border:1px solid #b1cefb;background:var(--accent-soft);color:var(--accent-dark);border-radius:5px;font-size:13px;padding:5px 8px}
+.calendar-day.calendar-conflict{background:#fff1f0;color:var(--danger);border-color:var(--danger)}
+@media(max-width:760px){.student-add-layout{grid-template-columns:minmax(0,1fr);gap:24px}.student-add-modal .student-picker-list{max-height:150px}.student-add-dates{border-top:1px solid var(--line);padding-top:20px}.student-date-selection{max-height:90px}}
 @media(max-width:600px){.date-trigger{font-size:16px}.modal.calendar-modal{padding:22px 16px}.calendar-month{margin-bottom:12px}.calendar-month h3{font-size:19px}.date-calendar{border-spacing:2px}.date-calendar thead th{font-size:14px}.calendar-day{font-size:16px}}
