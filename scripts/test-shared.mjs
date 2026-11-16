@@ -18,7 +18,7 @@ for(const name of ['domain','attendance-form','mutations','initial-data-digest',
 }
 const load=name=>import(pathToFileURL(path.join(out,name+'.mjs')).href);
 const domain=await load('domain'),{buildCloudConfig,cloudSchedule}=await load('cloud-model'),{createSharedClient}=await load('shared-client');
-const {attendanceResetChanges}=await load('attendance-form');
+const {attendanceChanges,attendanceResetChanges}=await load('attendance-form');
 const {watchWorkspaceAccess}=await load('teacher-access');
 globalThis.window={dispatchEvent(){}};
 setLogLevel('silent');
@@ -95,6 +95,13 @@ try{
   await ok('whole class of 28 attendance records saves atomically',async()=>{
     const s=await snapshot(second),changes=s.state.participants.filter(p=>p.date==='2026-11-30'&&p.room===1).map(p=>({studentId:p.studentId,status:'present',note:''}));assert.equal(changes.length,28);
     const r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:3,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());await waitRevision(first,(await r.json()).revision);assert.equal(Object.values(first.snapshot().state.attendance).filter(a=>a.period===3).length,28);
+  });
+  await ok('two-status attendance keeps half-day pupils and shares the saved presence result',async()=>{
+    const s=await snapshot(second),date='2026-11-30',changes=attendanceChanges(s.state,date,1,5);
+    assert.equal(changes.length,28);assert.ok(changes.every(c=>['present','absent'].includes(c.status)));
+    assert.equal(changes.find(c=>c.studentId==='1-1').status,'absent');assert.equal(changes.find(c=>c.studentId==='3-1').status,'present');
+    const r=await post(second,{kind:'attendance',date,room:1,period:5,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());const next=await r.json();await waitRevision(first,next.revision);
+    for(const client of [first,second]){const n=client.snapshot().state;assert.equal(domain.getRecord(n,'1-1',date,5).status,'absent');assert.equal(domain.expectedStatus(n,'1-1',date,5),'experience');assert.equal(domain.roomRoster(n,date,1).length,28);assert.deepEqual(attendanceChanges(n,date,1,5),[]);}
   });
   await ok('whole-period reset clears 28 statuses and notes, broadcasts, and can be undone',async()=>{
     let s=await snapshot(second);

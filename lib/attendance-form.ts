@@ -1,12 +1,16 @@
 import {expectedStatus,getRecord,roomRoster,sameAttendance} from './domain';
-import type {AttendanceChange,AttendanceStatus,Room,SchoolState} from './types';
+import type {AttendanceChange,Room,SchoolState} from './types';
 
-export type AttendanceValue={status:AttendanceStatus|null;note:string};
+export const attendanceOptions=['present','absent'] as const;
+export type AttendanceCheckStatus=typeof attendanceOptions[number];
+export type AttendanceValue={status:AttendanceCheckStatus|null;note:string};
 export type AttendanceDrafts=Record<string,AttendanceValue>;
 
-export function attendanceInput(state:SchoolState,studentId:string,date:string,period:number):{status:AttendanceStatus;note:string}{
+export function attendanceInput(state:SchoolState,studentId:string,date:string,period:number):{status:AttendanceCheckStatus;note:string}{
   const record=getRecord(state,studentId,date,period);
-  return {status:record?.status??expectedStatus(state,studentId,date,period),note:record?.note??''};
+  const status=record?.status??expectedStatus(state,studentId,date,period);
+  // This screen tracks presence only; the separate plan keeps field-trip dates.
+  return {status:status==='absent'||status==='experience'?'absent':'present',note:record?.note??''};
 }
 
 export function attendanceChanges(state:SchoolState,date:string,room:Room,period:number,drafts:AttendanceDrafts={}):AttendanceChange[]{

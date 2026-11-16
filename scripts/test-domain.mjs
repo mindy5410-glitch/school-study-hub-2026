@@ -15,10 +15,21 @@ assert.deepEqual(domain.scheduleErrors(state,state.assignments),[]);
 assert.equal(domain.expectedStatus(state,'1-1',date,4),'present');assert.equal(domain.expectedStatus(state,'1-1',date,5),'experience');
 const snapshot={state,revision:0,updatedAt:'2026-11-13T00:00:00.000Z',history:[]};
 assert.deepEqual(attendanceForm.attendanceInput(state,'1-1',date,4),{status:'present',note:''});
-assert.deepEqual(attendanceForm.attendanceInput(state,'1-1',date,5),{status:'experience',note:''});
+assert.deepEqual(attendanceForm.attendanceInput(state,'1-1',date,5),{status:'absent',note:''});
+assert.deepEqual(attendanceForm.attendanceOptions,['present','absent']);
 const defaultChanges=attendanceForm.attendanceChanges(state,date,1,4);
 assert.deepEqual(defaultChanges,[{studentId:'1-1',status:'present',note:''},{studentId:'1-2',status:'present',note:''}]);
-assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,5),[{studentId:'1-1',status:'experience',note:''},{studentId:'1-2',status:'present',note:''}]);
+assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,5),[{studentId:'1-1',status:'absent',note:''},{studentId:'1-2',status:'present',note:''}]);
+assert.equal(domain.roomRoster(state,date,1).length,2,'Half-day pupils remain on the roster after departure');
+const halfDayOverride=attendanceForm.attendanceChanges(state,date,1,5,{'1-1':{status:'present',note:'다시 등교'}});
+assert.deepEqual(halfDayOverride,[{studentId:'1-1',status:'present',note:'다시 등교'},{studentId:'1-2',status:'present',note:''}]);
+for(const [legacy,normalized] of [['present','present'],['late','present'],['early','present'],['absent','absent'],['experience','absent']]){
+  const legacyState=structuredClone(state),key=domain.recordKey(date,'1-1',4);
+  legacyState.attendance[key]={studentId:'1-1',date,period:4,status:legacy,note:'기존 메모 유지',updatedAt:snapshot.updatedAt,updatedBy:'검증'};
+  assert.deepEqual(attendanceForm.attendanceInput(legacyState,'1-1',date,4),{status:normalized,note:'기존 메모 유지'});
+  assert.equal(legacyState.attendance[key].status,legacy,'Opening the form must not rewrite stored records');
+  assert.ok(attendanceForm.attendanceChanges(legacyState,date,1,4).every(c=>attendanceForm.attendanceOptions.includes(c.status)));
+}
 assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,4,{'1-1':{status:'absent',note:'결석 확인'},'2-1':{status:'absent',note:'다른 관리반'}}),[{studentId:'1-1',status:'absent',note:'결석 확인'},{studentId:'1-2',status:'present',note:''}]);
 assert.equal(Object.keys(state.attendance).length,0,'Selecting defaults must not write attendance');
 const defaultsSaved=applyMutation(snapshot,{kind:'attendance',date,room:1,period:4,changes:defaultChanges,baseRevision:0},'검증');
