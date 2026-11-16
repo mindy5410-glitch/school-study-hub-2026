@@ -104,12 +104,14 @@ try{
     const s=await snapshot(second),changes=s.state.participants.filter(p=>p.date==='2026-11-30'&&p.room===1).map(p=>({studentId:p.studentId,status:'present',note:''}));assert.equal(changes.length,28);
     const r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:3,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());await waitRevision(first,(await r.json()).revision);assert.equal(Object.values(first.snapshot().state.attendance).filter(a=>a.period===3).length,28);
   });
-  await ok('two-status attendance keeps half-day pupils and shares the saved presence result',async()=>{
-    const s=await snapshot(second),date='2026-11-30',changes=attendanceChanges(s.state,date,1,5);
+  await ok('absent defaults keep half-day pupils and share an explicit present choice',async()=>{
+    const s=await snapshot(second),date='2026-11-30';
+    assert.ok(attendanceChanges(s.state,date,1,5).every(c=>c.status==='absent'));
+    const changes=attendanceChanges(s.state,date,1,5,{'3-1':{status:'present',note:'등교 확인'}});
     assert.equal(changes.length,28);assert.ok(changes.every(c=>['present','absent'].includes(c.status)));
     assert.equal(changes.find(c=>c.studentId==='1-1').status,'absent');assert.equal(changes.find(c=>c.studentId==='3-1').status,'present');
     const r=await post(second,{kind:'attendance',date,room:1,period:5,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());const next=await r.json();await waitRevision(first,next.revision);
-    for(const client of [first,second]){const n=client.snapshot().state;assert.equal(domain.getRecord(n,'1-1',date,5).status,'absent');assert.equal(domain.expectedStatus(n,'1-1',date,5),'experience');assert.equal(domain.roomRoster(n,date,1).length,28);assert.deepEqual(attendanceChanges(n,date,1,5),[]);}
+    for(const client of [first,second]){const n=client.snapshot().state;assert.equal(domain.getRecord(n,'1-1',date,5).status,'absent');assert.equal(domain.getRecord(n,'3-1',date,5).status,'present');assert.equal(domain.getRecord(n,'3-1',date,5).note,'등교 확인');assert.equal(domain.expectedStatus(n,'1-1',date,5),'experience');assert.equal(domain.roomRoster(n,date,1).length,28);assert.deepEqual(attendanceChanges(n,date,1,5),[]);}
   });
   await ok('whole-period reset clears 28 statuses and notes, broadcasts, and can be undone',async()=>{
     let s=await snapshot(second);

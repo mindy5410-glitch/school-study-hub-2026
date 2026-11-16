@@ -14,15 +14,15 @@ state.participants.push({studentId:'1-2',date,room:1,leavePeriod:null});state.st
 assert.deepEqual(domain.scheduleErrors(state,state.assignments),[]);
 assert.equal(domain.expectedStatus(state,'1-1',date,4),'present');assert.equal(domain.expectedStatus(state,'1-1',date,5),'experience');
 const snapshot={state,revision:0,updatedAt:'2026-11-13T00:00:00.000Z',history:[]};
-assert.deepEqual(attendanceForm.attendanceInput(state,'1-1',date,4),{status:'present',note:''});
+assert.deepEqual(attendanceForm.attendanceInput(state,'1-1',date,4),{status:'absent',note:''});
 assert.deepEqual(attendanceForm.attendanceInput(state,'1-1',date,5),{status:'absent',note:''});
 assert.deepEqual(attendanceForm.attendanceOptions,['present','absent']);
 const defaultChanges=attendanceForm.attendanceChanges(state,date,1,4);
-assert.deepEqual(defaultChanges,[{studentId:'1-1',status:'present',note:''},{studentId:'1-2',status:'present',note:''}]);
-assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,5),[{studentId:'1-1',status:'absent',note:''},{studentId:'1-2',status:'present',note:''}]);
+assert.deepEqual(defaultChanges,[{studentId:'1-1',status:'absent',note:''},{studentId:'1-2',status:'absent',note:''}]);
+assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,5),[{studentId:'1-1',status:'absent',note:''},{studentId:'1-2',status:'absent',note:''}]);
 assert.equal(domain.roomRoster(state,date,1).length,2,'Half-day pupils remain on the roster after departure');
 const halfDayOverride=attendanceForm.attendanceChanges(state,date,1,5,{'1-1':{status:'present',note:'다시 등교'}});
-assert.deepEqual(halfDayOverride,[{studentId:'1-1',status:'present',note:'다시 등교'},{studentId:'1-2',status:'present',note:''}]);
+assert.deepEqual(halfDayOverride,[{studentId:'1-1',status:'present',note:'다시 등교'},{studentId:'1-2',status:'absent',note:''}]);
 for(const [legacy,normalized] of [['present','present'],['late','present'],['early','present'],['absent','absent'],['experience','absent']]){
   const legacyState=structuredClone(state),key=domain.recordKey(date,'1-1',4);
   legacyState.attendance[key]={studentId:'1-1',date,period:4,status:legacy,note:'기존 메모 유지',updatedAt:snapshot.updatedAt,updatedBy:'검증'};
@@ -30,17 +30,18 @@ for(const [legacy,normalized] of [['present','present'],['late','present'],['ear
   assert.equal(legacyState.attendance[key].status,legacy,'Opening the form must not rewrite stored records');
   assert.ok(attendanceForm.attendanceChanges(legacyState,date,1,4).every(c=>attendanceForm.attendanceOptions.includes(c.status)));
 }
-assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,4,{'1-1':{status:'absent',note:'결석 확인'},'2-1':{status:'absent',note:'다른 관리반'}}),[{studentId:'1-1',status:'absent',note:'결석 확인'},{studentId:'1-2',status:'present',note:''}]);
+assert.deepEqual(attendanceForm.attendanceChanges(state,date,1,4,{'1-1':{status:'present',note:'등교 확인'},'2-1':{status:'absent',note:'다른 관리반'}}),[{studentId:'1-1',status:'present',note:'등교 확인'},{studentId:'1-2',status:'absent',note:''}]);
 assert.equal(Object.keys(state.attendance).length,0,'Selecting defaults must not write attendance');
 const defaultsSaved=applyMutation(snapshot,{kind:'attendance',date,room:1,period:4,changes:defaultChanges,baseRevision:0},'검증');
 assert.deepEqual(attendanceForm.attendanceChanges(defaultsSaved.state,date,1,4),[]);
 assert.equal(Object.keys(defaultsSaved.state.attendance).length,2);
+for(const studentId of ['1-1','1-2'])assert.equal(domain.getRecord(defaultsSaved.state,studentId,date,4).status,'absent','Confirming defaults must save absent');
 assert.equal(domain.getRecord(defaultsSaved.state,'1-1',date,5),undefined,'Confirmation must affect only the selected period');
 assert.equal(domain.getRecord(defaultsSaved.state,'2-1',date,4),undefined,'Confirmation must affect only the selected room');
 const previouslyMarked=structuredClone(state);
 previouslyMarked.attendance[domain.recordKey(date,'1-1',4)]={studentId:'1-1',date,period:4,status:'absent',note:'이미 확인한 결석',updatedAt:'2026-11-13T00:00:00.000Z',updatedBy:'검증'};
 assert.deepEqual(attendanceForm.attendanceInput(previouslyMarked,'1-1',date,4),{status:'absent',note:'이미 확인한 결석'});
-assert.deepEqual(attendanceForm.attendanceChanges(previouslyMarked,date,1,4),[{studentId:'1-2',status:'present',note:''}]);
+assert.deepEqual(attendanceForm.attendanceChanges(previouslyMarked,date,1,4),[{studentId:'1-2',status:'absent',note:''}]);
 assert.deepEqual(attendanceForm.attendanceResetChanges(state,date,1,4),[],'Default selections are not saved records');
 assert.deepEqual(attendanceForm.attendanceResetChanges(previouslyMarked,date,1,4),[{studentId:'1-1',status:null,note:''}],'Partial saves reset only saved pupils');
 const resetFixture=structuredClone(defaultsSaved.state);
@@ -54,7 +55,7 @@ for(const studentId of ['1-1','1-2'])assert.equal(domain.getRecord(resetResult.s
 for(const [recordDate,studentId,recordPeriod] of [[date,'2-1',4],[date,'1-1',3],[otherDate,'1-1',4]])assert.deepEqual(domain.getRecord(resetResult.state,studentId,recordDate,recordPeriod),domain.getRecord(resetBefore,studentId,recordDate,recordPeriod));
 assert.deepEqual(resetFixture,resetBefore,'Reset must not mutate its input snapshot');
 assert.deepEqual(attendanceForm.attendanceResetChanges(resetResult.state,date,1,4),[]);
-assert.deepEqual(attendanceForm.attendanceInput(resetResult.state,'1-1',date,4),{status:'present',note:''},'Default present remains unsaved after reset');
+assert.deepEqual(attendanceForm.attendanceInput(resetResult.state,'1-1',date,4),{status:'absent',note:''},'Default absent remains unsaved after reset');
 const resetUndo=resetChanges.map(c=>{const r=domain.getRecord(resetBefore,c.studentId,date,4);return {studentId:c.studentId,status:r.status,note:r.note};});
 const resetUndone=applyMutation({...snapshot,state:resetResult.state,revision:11},{kind:'attendance',date,room:1,period:4,changes:resetUndo,baseRevision:11},'검증');
 for(const c of resetUndo)assert.deepEqual(attendanceForm.attendanceInput(resetUndone.state,c.studentId,date,4),{status:c.status,note:c.note});
