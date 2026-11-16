@@ -428,3 +428,11 @@ tbody tr:hover{background:#f1f5fc}
   .roster-row-actions{justify-content:stretch;gap:6px}
   .roster-row-actions .button{flex:1;min-height:40px;padding:7px 6px;white-space:nowrap}
 }
+@media screen and (min-width:1101px) and (hover:hover) and (pointer:fine){
+  .roster-panel{overflow:visible}
+  .roster-panel>.panel-toolbar{border-radius:11px 11px 0 0}
+  .table-scroll.roster-scroll{max-height:none;overflow:visible}
+  .roster-scroll>table{min-width:0}
+  .roster-scroll tbody tr:last-child>:first-child{border-bottom-left-radius:11px}
+  .roster-scroll tbody tr:last-child>:last-child{border-bottom-right-radius:11px}
+}
