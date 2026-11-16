@@ -209,11 +209,11 @@ try{
   });
   const batchPupils=state.students.filter(s=>!state.participants.some(p=>p.studentId===s.id)).slice(-4);
   const entriesFor=dates=>dates.map(date=>({date,room:date<='2026-12-01'?2:1,startPeriod:1,endPeriod:state.days.find(d=>d.date===date).periods}));
-  const batchDays=entriesFor(['2026-11-30','2026-12-01','2026-12-17']);
+  const batchDays=[{date:'2026-11-30',room:2,startPeriod:2,endPeriod:4},{date:'2026-12-01',room:2,startPeriod:5,endPeriod:7},{date:'2026-12-17',room:1,startPeriod:1,endPeriod:3}];
   const batchBody=(id,entries=batchDays)=>({kind:'roster-batch',action:'add',studentId:id,entries});
   await ok('multiple roster dates share one revision, both clients, and immediate whole-batch undo',async()=>{
     let s=await snapshot(second),r=await post(second,{...batchBody(batchPupils[0].id),baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());let next=await r.json();assert.equal(next.revision,s.revision+1);await waitRevision(first,next.revision);
-    for(const client of [first,second])for(const e of batchDays){const p=client.snapshot().state.additionalParticipants.find(p=>p.studentId===batchPupils[0].id&&p.date===e.date);assert.deepEqual(p,{studentId:batchPupils[0].id,...e,addedRevision:next.revision});assert.ok(domain.dayParticipants(client.snapshot().state,e.date).some(p=>p.studentId===batchPupils[0].id&&p.room===e.room));}
+    for(const client of [first,second])for(const e of batchDays){const n=client.snapshot().state,p=n.additionalParticipants.find(p=>p.studentId===batchPupils[0].id&&p.date===e.date);assert.deepEqual(p,{studentId:batchPupils[0].id,...e,addedRevision:next.revision});assert.ok(domain.dayParticipants(n,e.date).some(p=>p.studentId===batchPupils[0].id&&p.room===e.room));assert.equal(domain.expectedStatus(n,batchPupils[0].id,e.date,e.startPeriod),'present');assert.equal(domain.expectedStatus(n,batchPupils[0].id,e.date,e.endPeriod),'present');if(e.startPeriod>1)assert.equal(domain.expectedStatus(n,batchPupils[0].id,e.date,e.startPeriod-1),'experience');if(e.endPeriod<state.days.find(d=>d.date===e.date).periods)assert.equal(domain.expectedStatus(n,batchPupils[0].id,e.date,e.endPeriod+1),'experience');}
     const head=await read(owner,'school/live'),log=await read(owner,`history/${head.lastLog}`);assert.equal(log.kind,'roster-batch');assert.deepEqual(log.entries,Object.fromEntries(batchDays.map(e=>[e.date,`${e.room}:${e.startPeriod}:${e.endPeriod}`])));
     r=await post(first,{...batchBody(batchPupils[0].id),action:'remove',baseRevision:next.revision});assert.equal(r.status,200,await r.clone().text());next=await r.json();await waitRevision(second,next.revision);assert.ok(!second.snapshot().state.additionalParticipants.some(p=>p.studentId===batchPupils[0].id));
   });
