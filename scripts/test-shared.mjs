@@ -11,13 +11,14 @@ import {makeFixture} from './synthetic-fixture.mjs';
 const projectId=`demo-school-hub-${Date.now()}`;
 const out=path.resolve('.sites-runtime/test-compiled/lib');
 await fs.mkdir(out,{recursive:true});
-for(const name of ['domain','mutations','initial-data-digest','cloud-model','firebase-runtime','shared-client','teacher-access']){
+for(const name of ['domain','attendance-form','mutations','initial-data-digest','cloud-model','firebase-runtime','shared-client','teacher-access']){
   const source=await fs.readFile(`lib/${name}.ts`,'utf8');
   let compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace(/from '(\.\/[^']+)'/g,"from '$1.mjs'");
   await fs.writeFile(path.join(out,name+'.mjs'),compiled);
 }
 const load=name=>import(pathToFileURL(path.join(out,name+'.mjs')).href);
 const domain=await load('domain'),{buildCloudConfig,cloudSchedule}=await load('cloud-model'),{createSharedClient}=await load('shared-client');
+const {attendanceResetChanges}=await load('attendance-form');
 const {watchWorkspaceAccess}=await load('teacher-access');
 globalThis.window={dispatchEvent(){}};
 setLogLevel('silent');
@@ -95,6 +96,29 @@ try{
     const s=await snapshot(second),changes=s.state.participants.filter(p=>p.date==='2026-11-30'&&p.room===1).map(p=>({studentId:p.studentId,status:'present',note:''}));assert.equal(changes.length,28);
     const r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:3,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());await waitRevision(first,(await r.json()).revision);assert.equal(Object.values(first.snapshot().state.attendance).filter(a=>a.period===3).length,28);
   });
+  await ok('whole-period reset clears 28 statuses and notes, broadcasts, and can be undone',async()=>{
+    let s=await snapshot(second);
+    let r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:3,changes:[{studentId:'1-1',status:'absent',note:'가상 결석 메모'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    r=await post(second,{kind:'attendance',date:'2026-11-30',room:2,period:3,changes:[{studentId:'2-1',status:'late',note:'다른 반 보존'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();
+    const changes=attendanceResetChanges(s.state,'2026-11-30',1,3);assert.equal(changes.length,28);
+    const ids=new Set(changes.map(c=>domain.recordKey('2026-11-30',c.studentId,3))),unaffected=Object.entries(s.state.attendance).filter(([id])=>!ids.has(id));
+    const previous=changes.map(c=>{const a=domain.getRecord(s.state,c.studentId,'2026-11-30',3);return {studentId:c.studentId,status:a.status,note:a.note};});
+    r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:3,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    for(const id of ids){assert.equal(s.state.attendance[id],undefined);assert.equal(first.snapshot().state.attendance[id],undefined);}
+    for(const [id,a] of unaffected)assert.deepEqual(s.state.attendance[id],a);
+    for(const c of changes){const raw=await read(owner,`attendance/2026-11-30|${c.studentId}|3`);assert.equal(raw.status,'unrecorded');assert.equal(raw.note,'');assert.equal(raw.revision,s.revision);}
+    assert.deepEqual(attendanceResetChanges(s.state,'2026-11-30',1,3),[]);
+    r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:3,changes:previous,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    for(const c of previous){const a=domain.getRecord(first.snapshot().state,c.studentId,'2026-11-30',3);assert.equal(a.status,c.status);assert.equal(a.note,c.note);}
+  });
+  await ok('a whole-period reset and a concurrent edit cannot overwrite each other',async()=>{
+    const s=await snapshot(first);await waitRevision(second,s.revision);
+    const context={kind:'attendance',date:'2026-11-30',room:1,period:3,baseRevision:s.revision},changes=attendanceResetChanges(s.state,context.date,1,3);assert.equal(changes.length,28);
+    const responses=await Promise.all([post(first,{...context,changes}),post(second,{...context,changes:[{studentId:'1-1',status:'late',note:'가상 동시 변경'}]})]);
+    assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);await waitRevision(first,s.revision+1);await waitRevision(second,s.revision+1);
+    const stale=await post(first,{...context,changes});assert.equal(stale.status,409);
+    if(responses[0].ok)assert.equal(attendanceResetChanges(first.snapshot().state,context.date,1,3).length,0);else assert.equal(domain.getRecord(first.snapshot().state,'1-1',context.date,3).note,'가상 동시 변경');
+  });
   await ok('simultaneous saves keep one commit and return 409 to the other',async()=>{
     const s=await snapshot(first);await waitRevision(second,s.revision);const body={kind:'attendance',date:'2026-11-30',room:1,period:2,changes:[{studentId:'3-1',status:'present',note:''}],baseRevision:s.revision};
     const results=await Promise.all([post(first,body),post(second,{...body,changes:[{studentId:'1-1',status:'late',note:''}]})]);assert.deepEqual(results.map(r=>r.status).sort(),[200,409],JSON.stringify(await Promise.all(results.map(async r=>({status:r.status,error:(await r.clone().json()).error})))));await waitRevision(first,s.revision+1);await waitRevision(second,s.revision+1);assert.equal(first.snapshot().revision,s.revision+1);
@@ -143,6 +167,12 @@ try{
   await ok('added pupil attendance saves and a later undo cannot hide confirmed records',async()=>{
     let s=await snapshot(first);let r=await post(first,{kind:'attendance',date:'2026-11-30',room:1,period:2,changes:[{studentId:newPupils[0].id,status:'present',note:'가상 추가 출석'}],baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(second,s.revision);assert.equal(domain.getRecord(second.snapshot().state,newPupils[0].id,'2026-11-30',2).status,'present');
     r=await post(second,{...extraBody(newPupils[0].id),action:'remove',baseRevision:s.revision});assert.equal(r.status,422,await r.text());await assertFails(rawRoster({...extraBody(newPupils[0].id),action:'remove'}));
+  });
+  await ok('whole-period reset keeps additional pupils on both attendance and original-class rosters',async()=>{
+    let s=await snapshot(second);const additions=structuredClone(s.state.additionalParticipants);
+    const changes=attendanceResetChanges(s.state,'2026-11-30',1,2);assert.ok(changes.some(c=>c.studentId===newPupils[0].id));
+    const r=await post(second,{kind:'attendance',date:'2026-11-30',room:1,period:2,changes,baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);
+    for(const client of [first,second]){const next=client.snapshot().state;assert.equal(domain.getRecord(next,newPupils[0].id,'2026-11-30',2),undefined);assert.deepEqual(next.additionalParticipants,additions);assert.ok(domain.roomRoster(next,'2026-11-30',1).some(p=>p.id===newPupils[0].id));assert.equal(domain.dayParticipants(next,'2026-11-30').find(p=>p.studentId===newPupils[0].id).room,1);}
   });
   await ok('immediate roster undo and attendance on an initially empty school day work',async()=>{
     let s=await snapshot(second);let r=await post(second,{...extraBody(newPupils[1].id,'2026-12-17'),baseRevision:s.revision});assert.equal(r.status,200,await r.clone().text());s=await r.json();await waitRevision(first,s.revision);

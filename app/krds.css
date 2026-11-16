@@ -264,3 +264,5 @@ tbody tr:hover{background:#f1f5fc}
 @media(max-width:480px){.student-picker-query{grid-template-columns:1fr;gap:0}.student-picker-list{max-height:210px}.student-picker-list>label{grid-template-columns:20px 78px minmax(0,1fr);gap:9px;padding:10px;font-size:15px}.student-period-range{gap:12px}}
 @media screen{.app-shell.has-drafts .main-content{padding-bottom:184px}}
 @media print{.service-strip,.service-header,.service-footer,.breadcrumbs,.skip-link{display:none!important}.main-content{width:100%;margin:0;padding:0;min-height:0}.page-heading h1{font-size:22px}.table-scroll{max-height:none;border:0}.main-content .duty-table{min-width:0}thead th{color:#1e2124;background:#eef2f6!important}.duty-cell{font-size:10px;min-height:0}.date-cell strong{font-size:10px}.room-tag{font-size:9px}.auth-layout{display:none}}
+.reset-scope{font-size:18px;line-height:1.6;margin-bottom:16px}
+.reset-description{font-size:16px;line-height:1.8;margin:12px 0;color:var(--muted)}

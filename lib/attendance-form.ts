@@ -17,3 +17,10 @@ export function attendanceChanges(state:SchoolState,date:string,room:Room,period
   }
   return changes;
 }
+
+// Use the full room roster so a search never narrows a whole-period reset.
+export function attendanceResetChanges(state:SchoolState,date:string,room:Room,period:number):AttendanceChange[]{
+  return roomRoster(state,date,room)
+    .filter(student=>!!getRecord(state,student.id,date,period))
+    .map(student=>({studentId:student.id,status:null,note:''}));
+}
