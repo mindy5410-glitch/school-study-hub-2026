@@ -1,7 +1,7 @@
 'use client';
 import {Search} from 'lucide-react';
 import type {Room,Snapshot} from '../../lib/types';
-import {dayParticipants,expectedStatus,getRecord,STATUS} from '../../lib/domain';
+import {dayParticipants,expectedStatus,getRecord,roomLabel,STATUS} from '../../lib/domain';
 import {DatePicker,EmptyState} from './ui';
 
 export function OriginalView({snapshot,date,onDate,classNo,onClass,search,onSearch,onOpenRecord}:{snapshot:Snapshot;date:string;onDate:(d:string)=>void;classNo:number;onClass:(c:number)=>void;search:string;onSearch:(v:string)=>void;onOpenRecord:(date:string,room:Room,period:number)=>void}){
@@ -14,7 +14,7 @@ export function OriginalView({snapshot,date,onDate,classNo,onClass,search,onSear
       <div className="table-caption"><p><strong>{classNo?`원반 ${classNo}반`:'전체 원반'} 출석부</strong></p></div>
       {!students.length?<EmptyState title="검색한 학생이 없습니다"/>:<div className="table-scroll"><table className="original-table"><thead><tr><th scope="col">원반</th><th scope="col">번호</th><th scope="col">학생</th><th scope="col">선택일 관리반</th>{Array.from({length:7},(_,i)=><th scope="col" key={i}>{i+1}교시</th>)}</tr></thead><tbody>{students.map(s=>{
         const participant=participants.find(p=>p.studentId===s.id);
-        return <tr key={s.id}><td><span className="class-pill">{s.classNo}반</span></td><td>{s.number}</td><th scope="row" className="student-name" title={s.originalName}>{s.name}</th><td>{participant?<span className={`room-tag room-${participant.room}`}>기간{participant.room}반 ({participant.room+2}반)</span>:<span className="subtle">체험학습</span>}</td>{Array.from({length:7},(_,i)=>{
+        return <tr key={s.id}><td><span className="class-pill">{s.classNo}반</span></td><td>{s.number}</td><th scope="row" className="student-name" title={s.originalName}>{s.name}</th><td>{participant?<span className={`room-tag room-${participant.room}`}>{roomLabel(participant.room)} ({participant.room+2}반)</span>:<span className="subtle">체험학습</span>}</td>{Array.from({length:7},(_,i)=>{
           const p=i+1;if(p>day.periods)return <td className="no-class" key={p}>—</td>;
           const r=getRecord(state,s.id,date,p),planned=expectedStatus(state,s.id,date,p),tone=r?STATUS[r.status].tone:planned==='experience'?'planned':'unrecorded';
           const content=<span className={`mini-status ${tone}`}>{r?STATUS[r.status].short:planned==='experience'?'체험예정':'미기록'}</span>;

@@ -1,7 +1,7 @@
 import {collection,doc,getDocFromServer,limit,onSnapshot,onSnapshotsInSync,orderBy,query,runTransaction,serverTimestamp,type Firestore,type Unsubscribe} from 'firebase/firestore';
 import type {Auth,User} from 'firebase/auth';
 import type {AttendanceChange,Room,RosterDateEntry,Snapshot} from './types';
-import {recordKey,schoolDate} from './domain';
+import {recordKey,roomLabel,schoolDate} from './domain';
 import {applyMutation,MutationError} from './mutations';
 import {buildCloudConfig,cloudSchedule,cloudRoster,rosterParticipants,decodeInitialData,stateWithSchedule,type CloudConfig,type CloudSchedule,type CloudHead,type CloudAttendance,type CloudHistory,type CloudRoster} from './cloud-model';
 import {friendlyCloudError} from './firebase-runtime';
@@ -26,7 +26,7 @@ export function createSharedClient(db:Firestore,auth:Auth,user:User,actorName:st
       const state=stateWithSchedule(config,schedule);
       state.additionalParticipants=rosterParticipants([...rosters.values()]);
       for(const [id,r] of records)if(r.status!=='unrecorded')state.attendance[id]={studentId:r.studentId,date:r.date,period:r.period,status:r.status,note:r.note,updatedAt:r.updatedAt.toDate().toISOString(),updatedBy:r.actorName};
-      cached={state,revision:head.revision,updatedAt:head.updatedAt.toDate().toISOString(),history:[...history.entries()].map(([id,h])=>({id,revision:h.revision,kind:h.kind,actor:h.actorName,created_at:h.createdAt.toDate().toISOString(),summary:h.kind==='schedule'?`${schoolDate(h.date)} 기간${h.room}반 ${h.period}교시 ${h.fromTeacher} → ${h.toTeacher}${h.swapId?' (맞교환)':''}`:h.kind==='roster-batch'?`${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} · ${Object.keys(h.entries??{}).sort().map(d=>schoolDate(d)).join(', ')} ${h.action==='add'?'학생 추가':'추가 취소'}`:h.kind==='roster'?`${schoolDate(h.date)} 기간${h.room}반 ${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} ${h.action==='add'?'학생 추가':'추가 취소'}`:`${schoolDate(h.date)} 기간${h.room}반 ${h.period}교시 출석 기록 변경`})).sort((a,b)=>b.revision-a.revision).slice(0,20)};
+      cached={state,revision:head.revision,updatedAt:head.updatedAt.toDate().toISOString(),history:[...history.entries()].map(([id,h])=>({id,revision:h.revision,kind:h.kind,actor:h.actorName,created_at:h.createdAt.toDate().toISOString(),summary:h.kind==='schedule'?`${schoolDate(h.date)} ${roomLabel(h.room)} ${h.period}교시 ${h.fromTeacher} → ${h.toTeacher}${h.swapId?' (맞교환)':''}`:h.kind==='roster-batch'?`${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} · ${Object.keys(h.entries??{}).sort().map(d=>schoolDate(d)).join(', ')} ${h.action==='add'?'학생 추가':'추가 취소'}`:h.kind==='roster'?`${schoolDate(h.date)} ${roomLabel(h.room)} ${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} ${h.action==='add'?'학생 추가':'추가 취소'}`:`${schoolDate(h.date)} ${roomLabel(h.room)} ${h.period}교시 출석 기록 변경`})).sort((a,b)=>b.revision-a.revision).slice(0,20)};
       changeStatus('ready');for(const w of waiters)if(cached.revision>=w.minimum){clearTimeout(w.timer);w.resolve(cached);waiters.delete(w);}
       if(cached.revision!==lastPublished){lastPublished=cached.revision;window.dispatchEvent(new Event('school:updated'));}
     }catch(error){fail(error);}

@@ -17,7 +17,7 @@ export function makeFixture(domain) {
   const firstDayPupils=new Set(participants.filter(p=>p.date===days[0].date).map(p=>p.studentId));
   for(const s of students.filter(s=>!firstDayPupils.has(s.id)).slice(0,26))participants.push({studentId:s.id,date:days[0].date,room:1,leavePeriod:null});
   const blocked=[['teacher01','월',4],['teacher02','화',1],['teacher06','수',2],['teacher04','수',2]].map(([teacherId,weekday,period])=>({teacherId,weekday,period,grade:1,classNo:1,subject:'가상 수업',sourceCell:'synthetic'}));
-  const state={schemaVersion:1,students,days,participants,teachers,assignments,blocked,attendance:{},settings:{roomNames:{1:'기간1반',2:'기간2반'},leaveStartPeriod:5,leaveStartTime:'14:00',excludedTeachers:['가상 제외 교사'],sourceVersion:'synthetic-test',weeklyTimetableRepeats:true,wednesday56NoRegularLessons:true}};
+  const state={schemaVersion:1,students,days,participants,teachers,assignments,blocked,attendance:{},settings:{roomNames:{1:'A반',2:'B반'},leaveStartPeriod:5,leaveStartTime:'14:00',excludedTeachers:['가상 제외 교사'],sourceVersion:'synthetic-test',weeklyTimetableRepeats:true,wednesday56NoRegularLessons:true}};
   const remaining=Object.fromEntries(teachers.map((t,i)=>[t.id,targets[i]]));
   function fill(i){
     if(i===assignments.length)return true;

@@ -7,7 +7,7 @@ export const STATUS = {
 } as const;
 export const statusOptions=Object.keys(STATUS) as AttendanceStatus[];
 export const recordKey=(date:string,studentId:string,period:number)=>`${date}|${studentId}|${period}`;
-export const roomLabel=(room:Room)=>`체험학습기간${room}반(${room+2}반)`;
+export const roomLabel=(room:Room)=>room===1?'A반':'B반';
 export function schoolDate(date:string,long=false){
   const [,m,d]=date.split('-').map(Number);return long?`${m}월 ${d}일`:`${m}/${d}`;
 }

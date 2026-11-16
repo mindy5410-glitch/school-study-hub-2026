@@ -2,7 +2,7 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {Calendar,ClipboardList,School,Settings,History,RefreshCw,Check,AlertCircle,X,ChevronRight,LogOut,Loader2,ArrowLeftRight} from 'lucide-react';
 import type {Assignment,AttendanceChange,Room,Snapshot} from '../lib/types';
-import {getRecord,schoolDate} from '../lib/domain';
+import {getRecord,roomLabel,schoolDate} from '../lib/domain';
 import {attendanceChanges,attendanceResetChanges} from '../lib/attendance-form';
 import {ScheduleEditor,ScheduleView,type ScheduleMutation} from './components/schedule';
 import {AttendanceView,type Drafts} from './components/attendance';
@@ -92,7 +92,7 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
     setSaving(true);setResetError('');
     try{
       const result=await mutate({kind:'attendance',...context,changes,baseRevision});setDrafts({});setAttendanceReset(null);
-      setToast({message:`${schoolDate(date)} 기간${room}반 ${period}교시 ${changes.length}명의 기록을 저장 전으로 복원했습니다.`,action:{label:'복원 취소',run:async()=>{
+      setToast({message:`${schoolDate(date)} ${roomLabel(room)} ${period}교시 ${changes.length}명의 기록을 저장 전으로 복원했습니다.`,action:{label:'복원 취소',run:async()=>{
         setSaving(true);
         try{await mutate({kind:'attendance',...context,changes:previous,baseRevision:result.revision});setToast({message:'복원을 취소하고 출석 상태와 메모를 되살렸습니다.'});}
         catch(e){setToast({message:e instanceof Error?e.message:'복원을 취소하지 못했습니다.',error:true});}
@@ -131,7 +131,7 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
     {edit&&snapshot&&<ScheduleEditor snapshot={snapshot} assignmentId={edit.id} onClose={()=>setEdit(null)} onSave={saveSchedule}/>}
     {addingStudent&&snapshot&&<AddStudentModal snapshot={snapshot} date={date} room={room} period={period} onClose={()=>setAddingStudent(false)} onSave={saveRoster}/>}
     {attendanceReset&&<Modal title="이 교시 전체 기록을 되돌릴까요?" onClose={()=>{if(!saving)setAttendanceReset(null);}}>
-      <p className="reset-scope"><strong>{schoolDate(attendanceReset.date,true)} · 기간{attendanceReset.room}반 · {attendanceReset.period}교시</strong></p>
+      <p className="reset-scope"><strong>{schoolDate(attendanceReset.date,true)} · {roomLabel(attendanceReset.room)} · {attendanceReset.period}교시</strong></p>
       <p className="reset-description">저장된 {attendanceReset.changes.length}명의 출석 상태와 메모를 모두 저장 전(미기록) 상태로 복원합니다. 검색으로 보이지 않는 학생도 포함됩니다.</p>
       <p className="reset-description">학생 명단과 다른 날짜·반·교시의 기록은 유지됩니다.{dirty&&' 입력 중인 변경 내용은 취소됩니다.'}</p>
       {resetError&&<div className="inline-alert error" role="alert"><AlertCircle size={17}/>{resetError}</div>}
@@ -139,7 +139,7 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
     </Modal>}
     {pendingNav&&<Modal title="저장하지 않은 출석 기록이 있습니다" description="현재 교시의 변경 내용을 저장하지 않고 이동할까요?" onClose={()=>setPendingNav(null)}><div className="modal-actions"><button className="button secondary" onClick={()=>setPendingNav(null)}>돌아가기</button><button className="button primary" onClick={()=>{setDrafts({});pendingNav();setPendingNav(null);}}>저장하지 않고 이동</button></div></Modal>}
     {history&&<Modal title="최근 변경 내역" onClose={()=>setHistory(false)} wide><div className="history-list">{!snapshot?.history.length?<div className="empty-history"><History size={25}/><p>아직 저장한 변경이 없습니다.</p></div>:snapshot.history.map(h=><article key={h.id}><span className="history-icon">{h.kind==='schedule'?<Calendar size={17}/>:<ClipboardList size={17}/>}</span><div><strong>{h.summary}</strong><p>{h.actor}<span>·</span>{formatSaved(h.created_at)}</p></div></article>)}</div></Modal>}
-    {rules&&snapshot&&<Modal title="운영 기준" onClose={()=>setRules(false)} wide><div className="rules-grid"><section><h3>관리반과 교시</h3><p>11/30·12/1: 기간1반(3반), 기간2반(4반)</p><p>12/2부터: 기간1반(3반) 통합</p><p>월·수·목 6교시 / 화·금 7교시</p><p>14:00은 5교시 시작 시각</p><p>주말·12월 11일·12월 25일 제외</p></section><section><h3>임장 배정</h3><p>{snapshot.state.teachers.filter(t=>t.minDuties===2).map(t=>t.name).join('·')}: 전체 기간 각 2~3교시</p><p>{snapshot.state.teachers.filter(t=>t.minDuties===5).map(t=>t.name).join('·')}: 전체 기간 각 5~6교시</p><p>그 외 {snapshot.state.teachers.filter(t=>t.minDuties===0).length}명: 기준 배정 각 8교시</p><p>{snapshot.state.settings.excludedTeachers.join('·')} 선생님은 배정 대상에서 제외</p></section></div><section className="rule-lessons"><h3>1·2학년 수업 제외 시간</h3>{snapshot.state.teachers.filter(t=>snapshot.state.blocked.some(b=>b.teacherId===t.id)).map(t=><div key={t.id}><strong>{t.name}</strong><span>{snapshot.state.blocked.filter(b=>b.teacherId===t.id).map(b=>`${b.weekday} ${b.period}교시`).join(' · ')}</span></div>)}<p className="subtle">제공 시간표를 전체 기간에 요일별로 동일 적용합니다. 수요일 5·6교시에는 1·2학년 수업이 없습니다.</p></section></Modal>}
+    {rules&&snapshot&&<Modal title="운영 기준" onClose={()=>setRules(false)} wide><div className="rules-grid"><section><h3>관리반과 교시</h3><p>11/30·12/1: {roomLabel(1)}(3반), {roomLabel(2)}(4반)</p><p>12/2부터: {roomLabel(1)}(3반) 통합</p><p>월·수·목 6교시 / 화·금 7교시</p><p>14:00은 5교시 시작 시각</p><p>주말·12월 11일·12월 25일 제외</p></section><section><h3>임장 배정</h3><p>{snapshot.state.teachers.filter(t=>t.minDuties===2).map(t=>t.name).join('·')}: 전체 기간 각 2~3교시</p><p>{snapshot.state.teachers.filter(t=>t.minDuties===5).map(t=>t.name).join('·')}: 전체 기간 각 5~6교시</p><p>그 외 {snapshot.state.teachers.filter(t=>t.minDuties===0).length}명: 기준 배정 각 8교시</p><p>{snapshot.state.settings.excludedTeachers.join('·')} 선생님은 배정 대상에서 제외</p></section></div><section className="rule-lessons"><h3>1·2학년 수업 제외 시간</h3>{snapshot.state.teachers.filter(t=>snapshot.state.blocked.some(b=>b.teacherId===t.id)).map(t=><div key={t.id}><strong>{t.name}</strong><span>{snapshot.state.blocked.filter(b=>b.teacherId===t.id).map(b=>`${b.weekday} ${b.period}교시`).join(' · ')}</span></div>)}<p className="subtle">제공 시간표를 전체 기간에 요일별로 동일 적용합니다. 수요일 5·6교시에는 1·2학년 수업이 없습니다.</p></section></Modal>}
     {toast&&<div className={`toast ${toast.error?'error':''}`} role="status">{toast.error?<AlertCircle size={18}/>:<Check size={18}/>}<span>{toast.message}</span>{toast.action&&<button onClick={toast.action.run}>{toast.action.label}</button>}<button className="toast-close" onClick={()=>setToast(null)} aria-label="알림 닫기"><X size={16}/></button></div>}
   </div>;
 }

@@ -1,4 +1,4 @@
-import {changedSchedule,recordKey,roomRoster,scheduleErrors,schoolDate,statusOptions} from './domain';
+import {changedSchedule,recordKey,roomLabel,roomRoster,scheduleErrors,schoolDate,statusOptions} from './domain';
 import type {AttendanceStatus,Room,Snapshot} from './types';
 export class MutationError extends Error {constructor(public status:number,message:string){super(message);}}
 export function applyMutation(snapshot:Snapshot,body:Record<string,unknown>,actor:string,now=new Date().toISOString()){
@@ -12,7 +12,7 @@ export function applyMutation(snapshot:Snapshot,body:Record<string,unknown>,acto
     let assignments;try{assignments=changedSchedule(state,body.assignmentId,body.teacherId,body.swapId as string|undefined);}catch(error){throw new MutationError(400,(error as Error).message);}
     const errors=scheduleErrors(state,assignments);if(errors.length)throw new MutationError(422,errors[0]);
     state.assignments=assignments;
-    summary=`${schoolDate(original.date)} 기간${original.room}반 ${original.period}교시 ${original.teacherId} → ${body.teacherId}${body.swapId?' (맞교환)':''}`;
+    summary=`${schoolDate(original.date)} ${roomLabel(original.room)} ${original.period}교시 ${original.teacherId} → ${body.teacherId}${body.swapId?' (맞교환)':''}`;
     details={assignmentId:body.assignmentId,previousTeacher:original.teacherId,teacherId:body.teacherId,swapId:body.swapId??null,reason:typeof body.reason==='string'?body.reason.trim().slice(0,300):''};
   }else if(body.kind==='roster-batch'){
     if(!Array.isArray(body.entries)||!body.entries.length||body.entries.length>20)throw new MutationError(400,'추가할 운영 날짜를 1일 이상 선택해 주세요.');
@@ -47,7 +47,7 @@ export function applyMutation(snapshot:Snapshot,body:Record<string,unknown>,acto
       if(previous.addedRevision!==snapshot.revision||Object.values(state.attendance).some(r=>r.studentId===studentId&&r.date===day.date))throw new MutationError(422,'추가 후 다른 기록이 저장되어 명단 추가를 취소할 수 없습니다.');
       state.additionalParticipants=additions.filter(p=>p!==previous);
     }else throw new MutationError(400,'지원하지 않는 명단 변경입니다.');
-    summary=`${schoolDate(day.date)} 기간${room}반 ${student.classNo}반 ${student.number}번 ${student.name} ${body.action==='add'?'추가':'추가 취소'}`;
+    summary=`${schoolDate(day.date)} ${roomLabel(room as Room)} ${student.classNo}반 ${student.number}번 ${student.name} ${body.action==='add'?'추가':'추가 취소'}`;
     details={date:day.date,room,studentId:student.id,startPeriod,endPeriod,action:body.action};
   }else if(body.kind==='attendance'){
     const day=state.days.find(d=>d.date===body.date),period=body.period,room=body.room;
@@ -63,7 +63,7 @@ export function applyMutation(snapshot:Snapshot,body:Record<string,unknown>,acto
       seen.add(c.studentId);const key=recordKey(day.date,c.studentId,Number(period));previous.push({studentId:c.studentId,record:state.attendance[key]??null});
       if(c.status===null)delete state.attendance[key];else state.attendance[key]={studentId:c.studentId,date:day.date,period:Number(period),status:c.status as AttendanceStatus,note:c.note.trim(),updatedAt:now,updatedBy:actor};
     }
-    summary=`${schoolDate(day.date)} 기간${room}반 ${period}교시 ${body.changes.length}명 출석 기록`;
+    summary=`${schoolDate(day.date)} ${roomLabel(room as Room)} ${period}교시 ${body.changes.length}명 출석 기록`;
     details={date:day.date,period,room,previous,changes:body.changes};
   }else throw new MutationError(400,'지원하지 않는 변경입니다.');
   return {state,summary,details,kind:String(body.kind)};
