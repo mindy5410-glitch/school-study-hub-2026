@@ -29,6 +29,19 @@ const reversedDays=[...operatingDays].reverse(),unmodifiedOrder=reversedDays.map
 for(const day of operatingDays)assert.equal(domain.defaultSchoolDate(reversedDays,new Date(`${day.date}T03:00:00Z`)),day.date);
 assert.deepEqual(reversedDays.map(d=>d.date),unmodifiedOrder);
 assert.equal(domain.defaultSchoolDate([],new Date('2026-12-01T03:00:00Z')),'2026-11-30');
+const expectedWeeks=[
+  ['2026-11-30','2026-12-01','2026-12-02','2026-12-03','2026-12-04'],
+  ['2026-12-07','2026-12-08','2026-12-09','2026-12-10'],
+  ['2026-12-14','2026-12-15','2026-12-16','2026-12-17','2026-12-18'],
+  ['2026-12-21','2026-12-22','2026-12-23','2026-12-24'],
+  ['2026-12-28','2026-12-29'],
+];
+const groupedWeeks=domain.schoolWeeks(reversedDays);
+assert.deepEqual(groupedWeeks.map(w=>w.days.map(d=>d.date)),expectedWeeks,'Weeks start on Monday, independently of excluded days or month boundaries');
+assert.deepEqual(groupedWeeks.map(w=>w.id),expectedWeeks.map(w=>w[0]));
+assert.deepEqual(groupedWeeks.flatMap(w=>w.days),operatingDays,'Every operating day remains in exactly one week');
+assert.deepEqual(reversedDays.map(d=>d.date),unmodifiedOrder,'Grouping must not reorder the source days');
+assert.deepEqual(domain.schoolWeeks([]),[]);
 const source=compile((await fs.readFile('lib/mutations.ts','utf8')).replace("from './domain'","from '"+domainUrl+"'"));
 const {applyMutation}=await import(url(source));
 const attendanceForm=await import(url(compile((await fs.readFile('lib/attendance-form.ts','utf8')).replace("from './domain'","from '"+domainUrl+"'"))));

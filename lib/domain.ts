@@ -20,6 +20,16 @@ export function defaultSchoolDate(days:SchoolDay[],now=new Date()):string{
   const dates=days.map(d=>d.date).sort();
   return dates.find(date=>date>=today)??dates.at(-1)??'2026-11-30';
 }
+export function schoolWeeks(days:SchoolDay[]){
+  const groups=new Map<string,SchoolDay[]>();
+  for(const day of [...days].sort((a,b)=>a.date.localeCompare(b.date))){
+    const monday=new Date(`${day.date}T00:00:00Z`);
+    monday.setUTCDate(monday.getUTCDate()-(monday.getUTCDay()+6)%7);
+    const id=monday.toISOString().slice(0,10);
+    const group=groups.get(id);if(group)group.push(day);else groups.set(id,[day]);
+  }
+  return [...groups].map(([id,days])=>({id,days}));
+}
 export function dayParticipants(state:SchoolState,date:string):Participant[]{
   const active:Participant[]=[...state.participants.filter(p=>p.date===date),...(state.additionalParticipants??[]).filter(p=>p.date===date).map(p=>({studentId:p.studentId,date:p.date,room:p.room,startPeriod:p.startPeriod,leavePeriod:p.endPeriod+1}))];
   const known=new Set(active.map(p=>p.studentId));

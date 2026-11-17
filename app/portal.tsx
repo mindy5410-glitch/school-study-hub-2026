@@ -28,7 +28,7 @@ export default function Portal({displayName,request,onSignOut,onManage}:{display
   const dateInitialized=useRef(false);
   const [room,setRoom]=useState<Room>(1),[period,setPeriod]=useState(1),[classNo,setClassNo]=useState(1);
   const attendanceContext=useRef({date,room,period});attendanceContext.current={date,room,period};
-  const [teacher,setTeacher]=useState('all'),[scope,setScope]=useState<'all'|'day'>('all');
+  const [teacher,setTeacher]=useState('all'),[scope,setScope]=useState<'week'|'day'>('week');
   const [attendanceSearch,setAttendanceSearch]=useState(''),[originalSearch,setOriginalSearch]=useState('');
   const [drafts,setDrafts]=useState<Drafts>({}),[saving,setSaving]=useState(false),[refreshing,setRefreshing]=useState(false);
   const [edit,setEdit]=useState<Assignment|null>(null),[rules,setRules]=useState(false),[history,setHistory]=useState(false);

@@ -436,3 +436,7 @@ tbody tr:hover{background:#f1f5fc}
   .roster-scroll tbody tr:last-child>:first-child{border-bottom-left-radius:11px}
   .roster-scroll tbody tr:last-child>:last-child{border-bottom-right-radius:11px}
 }
+.week-picker{display:flex;align-items:center;gap:4px;min-width:0;max-width:100%;min-height:48px;padding:3px 4px;border:1px solid #8a949e;border-radius:8px;background:#fff}
+.week-picker .icon-button{min-width:40px;min-height:40px;padding:6px}
+.week-picker select{flex:1;min-width:0;width:218px;min-height:38px;padding:4px 6px;border:0;border-radius:5px;background:#fff;font-size:16px;font-weight:500;color:var(--ink)}
+@media(max-width:600px){.schedule-toolbar>.week-picker{flex:1 1 100%;width:100%}.week-picker select{width:100%;font-size:15px}}
