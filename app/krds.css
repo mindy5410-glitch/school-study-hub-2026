@@ -440,11 +440,21 @@ tbody tr:hover{background:#f1f5fc}
 .week-picker .icon-button{min-width:40px;min-height:40px;padding:6px}
 .week-picker select{flex:1;min-width:0;width:218px;min-height:38px;padding:4px 6px;border:0;border-radius:5px;background:#fff;font-size:16px;font-weight:500;color:var(--ink)}
 @media(max-width:600px){.schedule-toolbar>.week-picker{flex:1 1 100%;width:100%}.week-picker select{width:100%;font-size:15px}}
-.modal.notice-modal{width:660px}
+.modal.notice-modal{width:760px;display:flex;flex-direction:column;overflow:hidden}
+.notice-modal .modal-heading{flex-shrink:0;margin-bottom:20px}
 .notice-modal .modal-heading h2{word-break:keep-all}
-.notice-body{font-size:18px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
-.notice-body p+p{margin-top:20px}
+.notice-body{min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-right:10px;font-size:16px;line-height:1.75;word-break:keep-all;overflow-wrap:anywhere}
+.notice-body p{margin:0}
+.notice-body p+p{margin-top:8px}
+.notice-body .notice-intro{margin-bottom:16px}
 .notice-body strong{font-weight:700;color:#0b50d0}
-.notice-modal .modal-actions{margin-top:16px}
+.notice-section+.notice-section{margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
+.notice-section h3{margin:0 0 8px;font-size:18px;font-weight:700;line-height:1.4;color:var(--ink)}
+.notice-section .notice-note{margin-top:8px;font-size:14px;line-height:1.65;color:#58616a}
+.notice-rooms{margin:8px 0 12px}
+.notice-rooms>div{display:grid;grid-template-columns:148px minmax(0,1fr);gap:8px;margin-top:6px}
+.notice-rooms dt{font-weight:700}
+.notice-rooms dd{margin:0;min-width:0}
+.notice-modal .modal-actions{flex-shrink:0;margin-top:16px;border-top:1px solid var(--line);padding-top:16px}
 .notice-modal .modal-actions .button{min-width:120px}
-@media(max-width:600px){.notice-body{font-size:16px;line-height:1.8}.notice-body p+p{margin-top:16px}}
+@media(max-width:600px){.notice-body{padding-right:8px}.notice-rooms>div{grid-template-columns:minmax(0,1fr);gap:2px;margin-top:10px}}
