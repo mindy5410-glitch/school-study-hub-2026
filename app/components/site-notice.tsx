@@ -19,7 +19,7 @@ export function SiteNotice(){
       <p className="notice-intro">안녕하세요 ^__^</p>
       {now<applicationNoticeEndsAt&&<section className="notice-section notice-deadline" aria-labelledby="notice-deadline-title">
         <h3 id="notice-deadline-title">신청 기안 제출</h3>
-        <p>11/30(월)~12/4(금) 체험학습 신청서는<br/><strong>11/27(금) 오전 9시까지</strong> 기안을 올려주세요.</p>
+        <p>11/30(월)~12/4(금) 체험학습 신청서는<br/><strong>11/27(금) 1교시까지</strong> 기안을 올려주세요.</p>
         <p className="notice-note">서류 확인·수정 시간이 필요하니 기한을 지켜 주시면 감사하겠습니다.</p>
       </section>}
       <section className="notice-section" aria-labelledby="notice-rooms-title">
