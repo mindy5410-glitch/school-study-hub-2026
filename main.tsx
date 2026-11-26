@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {onAuthStateChanged,type User} from 'firebase/auth';
 import Portal from './app/portal';
 import {AccountGate,BootstrapGate} from './app/components/account-gate';
+import {SiteNotice} from './app/components/site-notice';
 import {loadProjectConfig,type ProjectConfig} from './lib/project-config';
 import {initializeSchoolFirebase,friendlyCloudError,type SchoolFirebase} from './lib/firebase-runtime';
 import {watchWorkspaceAccess,type WorkspaceRole} from './lib/teacher-access';
@@ -44,4 +45,4 @@ function App(){
   if(!client||!client.snapshot())return <AccountGate status={sync==='loading'?'loading':'preparing'} error={syncError} {...gateProps}/>;
   return <div className={syncError?'connection-problem':''}>{syncError&&<div className="connection-alert" role="alert">{syncError}</div>}<Portal displayName={actor} request={client.request} onSignOut={signOut}/></div>;
 }
-createRoot(document.getElementById('root')!).render(<App/>);
+createRoot(document.getElementById('root')!).render(<><App/><SiteNotice/></>);

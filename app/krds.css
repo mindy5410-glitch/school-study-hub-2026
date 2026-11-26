@@ -440,3 +440,11 @@ tbody tr:hover{background:#f1f5fc}
 .week-picker .icon-button{min-width:40px;min-height:40px;padding:6px}
 .week-picker select{flex:1;min-width:0;width:218px;min-height:38px;padding:4px 6px;border:0;border-radius:5px;background:#fff;font-size:16px;font-weight:500;color:var(--ink)}
 @media(max-width:600px){.schedule-toolbar>.week-picker{flex:1 1 100%;width:100%}.week-picker select{width:100%;font-size:15px}}
+.modal.notice-modal{width:660px}
+.notice-modal .modal-heading h2{word-break:keep-all}
+.notice-body{font-size:18px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
+.notice-body p+p{margin-top:20px}
+.notice-body strong{font-weight:700;color:#0b50d0}
+.notice-modal .modal-actions{margin-top:16px}
+.notice-modal .modal-actions .button{min-width:120px}
+@media(max-width:600px){.notice-body{font-size:16px;line-height:1.8}.notice-body p+p{margin-top:16px}}
