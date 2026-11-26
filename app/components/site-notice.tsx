@@ -33,8 +33,8 @@ export function SiteNotice(){
         <p className="notice-note">추가 등록 등 개별 배정은 ‘원반별 출석부’의 관리반을 확인해 주세요.</p>
       </section>
       <section className="notice-section" aria-labelledby="notice-schedule-title">
-        <h3 id="notice-schedule-title">임장 시간표 추가</h3>
-        <p>기존 배정은 유지하고 <strong>12/17 이후 임장을 추가</strong>했습니다. ‘교사 임장’에서 본인 일정을 다시 확인해 주세요.</p>
+        <h3 id="notice-schedule-title">임장 시간표 확인</h3>
+        <p>12/17 이후 임장을 추가하고, <strong>일부 배정을 고르게 조정</strong>했습니다. ‘교사 임장’에서 최신 본인 일정을 확인해 주세요.</p>
       </section>
       <section className="notice-section" aria-labelledby="notice-add-title">
         <h3 id="notice-add-title">체험학습 대신 등교한다면</h3>
