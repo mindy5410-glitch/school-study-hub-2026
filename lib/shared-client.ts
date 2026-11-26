@@ -32,7 +32,7 @@ export function createSharedClient(db:Firestore,auth:Auth,user:User,actorName:st
         attendanceLocks:Object.fromEntries([...records.values()].map(r=>[`${r.date}|${r.studentId}`,r.room])),
         history:[...history.entries()].map(([id,h])=>{
           const context=`${schoolDate(h.date)} ${roomLabel(h.room)} ${h.period}교시`;
-          const summary=h.kind==='schedule'||h.kind==='coverage'?`${context} ${h.fromTeacher||'미배정'} → ${h.toTeacher||'미배정'}${h.swapId?' (맞교환)':''}`
+          const summary=h.kind==='coverage'&&h.reason?h.reason:h.kind==='schedule'||h.kind==='coverage'?`${context} ${h.fromTeacher||'미배정'} → ${h.toTeacher||'미배정'}${h.swapId?' (맞교환)':''}`
             :h.kind==='roster-batch'?`${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} · ${Object.keys(h.entries??{}).sort().map(d=>schoolDate(d)).join(', ')} ${h.action==='add'?'학생 추가':'추가 취소'}`
             :h.kind==='roster'?`${schoolDate(h.date)} ${roomLabel(h.room)} ${state.students.find(s=>s.id===h.studentId)?.name??h.studentId} ${h.action==='add'?'학생 추가':h.action==='update'?'등교 일정 수정':'추가 일정 취소'}`
             :`${context} ${h.action==='undo'?'직전 저장 취소':h.action==='reset'?'기록 초기화':'출석 기록 저장'}`;
